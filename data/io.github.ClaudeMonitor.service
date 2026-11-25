@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=io.github.ClaudeMonitor
+Exec=/bin/false
+SystemdService=claude-monitor.service

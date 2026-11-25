@@ -1,0 +1,31 @@
+[Unit]
+Description=Claude Monitor — local monitoring of Claude Code sessions
+Documentation=file://%h/.local/share/claude-monitor/app/docs/ARCHITECTURE.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=io.github.ClaudeMonitor
+ExecStart=%h/.local/bin/claude-monitord
+Restart=on-failure
+RestartSec=3
+# Low priority: never compete with Claude Code or your work.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
+MemoryHigh=120M
+MemoryMax=250M
+# Hardening: the whole home dir (including ~/.claude) is read-only for the
+# daemon, except its own data/state/config directories.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/claude-monitor %h/.local/state/claude-monitor %h/.config/claude-monitor
+PrivateTmp=yes
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=graphical-session.target
