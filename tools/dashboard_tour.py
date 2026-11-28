@@ -53,7 +53,9 @@ def plan():
         Adw.StyleManager.get_default().set_color_scheme(
             Adw.ColorScheme.FORCE_DARK if scheme == "dark" else Adw.ColorScheme.FORCE_LIGHT)
     seq = [
-        (2500, lambda: shot("01-overview")),
+        (2500, lambda: shot("00-view")),
+        (100, lambda: win.navigate("overview")),
+        (1200, lambda: shot("01-overview")),
         (100, lambda: win.navigate("sessions")),
         (1200, lambda: shot("02-sessions")),
         (100, lambda: win.open_session(first_live() or "mock-0001-aaaa", live=True)),

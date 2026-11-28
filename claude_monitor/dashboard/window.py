@@ -13,6 +13,7 @@ from .widgets import label, set_text
 
 PAGES = [
     # id, title, icon
+    ("office", "View", "cm-office-symbolic"),
     ("overview", "Overview", "cm-overview-symbolic"),
     ("sessions", "Sessions", "cm-session-symbolic"),
     ("timeline", "Timeline", "cm-timeline-symbolic"),
@@ -78,7 +79,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.snapshot: dict | None = None
         self.series: dict[str, deque] = {}
         self._pages: dict[str, Page] = {}
-        self._current = "overview"
+        self._current = "office"
         self._fetching = False
         self._dirty = False
         self._tick_id = 0
@@ -187,11 +188,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.split.set_sidebar(sidebar_page)
 
         self.content_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=160)
-        self.content_page = Adw.NavigationPage(title="Overview")
+        self.content_page = Adw.NavigationPage(title="View")
         self.content_page.set_child(self.content_stack)
         self.split.set_content(self.content_page)
         self.sidebar.select_row(self.sidebar.get_row_at_index(0))
-        GLib.idle_add(lambda: (self._show_page("overview"), False)[1])
+        GLib.idle_add(lambda: (self._show_page("office"), False)[1])
         return self.split
 
     def _install_actions(self) -> None:
@@ -223,6 +224,9 @@ class MainWindow(Adw.ApplicationWindow):
         return page
 
     def _page_class(self, page_id: str):
+        if page_id == "office":
+            from .pages.office import OfficePage
+            return OfficePage
         if page_id == "overview":
             from .pages.overview import OverviewPage
             return OverviewPage

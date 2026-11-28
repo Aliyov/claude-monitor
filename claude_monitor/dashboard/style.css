@@ -232,3 +232,10 @@ listview.cm-list > row:hover { background: none; }
 
 /* reduced motion: honour gtk-enable-animations=false automatically
  * (GTK disables CSS animations/transitions when the setting is off). */
+
+/* office View */
+.cm-office-legend { margin: 4px 12px 12px 12px; }
+.cm-dot.light-red    { background-color: #e8463e; }
+.cm-dot.light-yellow { background-color: #f0be32; }
+.cm-dot.light-green  { background-color: #4ec464; }
+.cm-dot.light-grey   { background-color: #9a9a9a; }

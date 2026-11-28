@@ -105,6 +105,8 @@ ICONS = {
     "cm-history": (arc_poly(8, 8, 5.9, math.radians(200), math.radians(200 + 300), W)
                    + f'<path fill="{C}" d="M0.9 3.3L5.6 3.9L2.2 7.4z"/>'
                    + polyline([(8, 4.8), (8, 8.2), (10.4, 9.8)], W)),
+    "cm-office": (rrect_ring(3, 2, 10, 7, 1.2, W) + rrect(7.2, 9, 1.6, 2.2, 0.3)
+                  + rrect(1, 11.2, 14, 1.8, 0.6) + rrect(2.2, 13, 1.6, 2.2, 0.3) + rrect(12.2, 13, 1.6, 2.2, 0.3)),
     "cm-check": polyline([(3, 8.6), (6.2, 11.6), (13, 4.4)], 1.9),
     "cm-chat": (f'<path fill="{C}" fill-rule="evenodd" d="{rrect_d(1.3, 1.6, 13.4, 10, 2.2)}'
                 f'{rrect_d(2.8, 3.1, 10.4, 7, 1)}"/>'
