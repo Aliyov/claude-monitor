@@ -136,13 +136,23 @@ def _window(f, j0, j1, top, bot, rng, phase):
 WINDOWS = ((4.6, 8.3), (9.0, 12.7))
 
 
+def windows_for(gj) -> list:
+    """The two windows by the coffee bar, then more every 4.4 tiles along a
+    long wall (big teams make the office deeper)."""
+    out = [w for w in WINDOWS if w[1] < gj - 0.6]
+    j0 = 13.4
+    while j0 + 3.7 < gj - 4.2:          # keep the lounge corner free
+        out.append((j0, j0 + 3.7))
+        j0 += 4.4
+    return out
+
+
 def left_wall(p: Pen, gj, rng, phase) -> None:
     """Brick wall along j at i = 0 with big windows onto the city."""
     with p.face_j(0, 0, WALL_H) as f:
         _bricks(f, gj, WALL_H, rng)
-        for j0, j1 in WINDOWS:
-            if j1 < gj - 0.6:
-                _window(f, j0, j1, 14, 62, rng, phase)
+        for j0, j1 in windows_for(gj):
+            _window(f, j0, j1, 14, 62, rng, phase)
         # wall sconces between windows
         f.rect(8.55, 30, 0.25, 6, (60, 56, 52))
         f.rect(8.5, 28, 0.35, 3, (250, 220, 150))
@@ -226,9 +236,7 @@ def window_light(p: Pen, gj, phase) -> None:
         return
     col = (255, 236, 170) if phase == "day" else (255, 176, 120)
     with p.floor(0) as f:
-        for j0, j1 in WINDOWS:
-            if j1 >= gj - 0.6:
-                continue
+        for j0, j1 in windows_for(gj):
             for k, a in ((0, 0.10), (1, 0.07)):
                 f.rect(1.5 + k * 0.6, j0 + 0.9 + k * 0.3, 3.2 - k * 1.0, j1 - j0 - 0.4, col, a)
 
