@@ -54,6 +54,9 @@ def plan():
             Adw.ColorScheme.FORCE_DARK if scheme == "dark" else Adw.ColorScheme.FORCE_LIGHT)
     seq = [
         (2500, lambda: shot("00-view")),
+        (100, lambda: win.get_page("office").canvas.set_focus_slot(0)),
+        (600, lambda: shot("00b-view-department")),
+        (100, lambda: win.get_page("office").canvas.set_focus_slot(None)),
         (100, lambda: win.navigate("overview")),
         (1200, lambda: shot("01-overview")),
         (100, lambda: win.navigate("sessions")),

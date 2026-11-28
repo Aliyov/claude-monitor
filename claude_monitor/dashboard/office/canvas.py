@@ -57,7 +57,8 @@ def _texture(r: scene.Rendered, k: int) -> Gdk.Texture:
 
 
 def _art_key(v: DepartmentView) -> tuple:
-    return (v.lit, v.slot, tuple((p.key, p.role, p.seat, p.name, p.light, p.working) for p in v.people))
+    return (v.lit, v.slot, tuple((p.key, p.role, p.seat, p.name, p.light, p.working, p.status,
+                                  (p.current or {}).get("tool")) for p in v.people))
 
 
 class _Dept:
@@ -80,11 +81,53 @@ class _Dept:
 class OfficeCanvas(Gtk.Widget):
     __gtype_name__ = "CmOfficeCanvas"
 
-    def __init__(self) -> None:
+    TAG_MIN_SCALE = 1.25   # below this the grid overview shows signs only
+
+    def __init__(self, on_focus=None) -> None:
         super().__init__(hexpand=True, vexpand=True)
         self.add_css_class("cm-office-canvas")
         self._depts: list[_Dept] = []
         self._layouts: dict[tuple, Pango.Layout] = {}
+        self._placed: list = []
+        self._scale = 1.0
+        self.focus_slot: int | None = None
+        self._on_focus = on_focus
+        click = Gtk.GestureClick()
+        click.connect("released", self._on_click)
+        self.add_controller(click)
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_motion)
+        self.add_controller(motion)
+
+    # ---------------------------------------------------------------- focus
+    def set_focus_slot(self, slot: int | None) -> None:
+        if slot == self.focus_slot:
+            return
+        self.focus_slot = slot
+        self.set_cursor(None)
+        self.queue_draw()
+        if self._on_focus:
+            self._on_focus(slot)
+
+    def _dept_at(self, x, y):
+        s = self._scale
+        for d, dx, dy in self._placed:
+            r = d.rendered
+            if dx <= x <= dx + r.width * s and dy - SIGN_H <= y <= dy + r.height * s:
+                return d
+        return None
+
+    def _on_click(self, gesture, n_press, x, y) -> None:
+        if self.focus_slot is None:
+            d = self._dept_at(x, y)
+            if d is not None:
+                self.set_focus_slot(d.view.slot)
+
+    def _on_motion(self, _ctl, x, y) -> None:
+        if self.focus_slot is None and self._dept_at(x, y) is not None:
+            self.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
+        else:
+            self.set_cursor(None)
 
     # ----------------------------------------------------------------- data
     def set_views(self, views: list[DepartmentView]) -> None:
@@ -100,19 +143,24 @@ class OfficeCanvas(Gtk.Widget):
             d.view = v
             new.append(d)
         self._depts = new
+        if self.focus_slot is not None and all(d.view.slot != self.focus_slot for d in new):
+            self.set_focus_slot(None)
         self.queue_draw()
 
     # --------------------------------------------------------------- layout
     def _arrange(self, width: float, height: float):
         """Pick the column count and scale that show every department as large
-        as possible."""
-        n = len(self._depts)
+        as possible. A focused department gets the whole area."""
+        depts = self._depts
+        if self.focus_slot is not None:
+            depts = [d for d in depts if d.view.slot == self.focus_slot] or depts
+        n = len(depts)
         if not n:
             return 1.0, []
         best = None
         for cols in range(1, n + 1):
             rows = math.ceil(n / cols)
-            grid = [self._depts[i:i + cols] for i in range(0, n, cols)]
+            grid = [depts[i:i + cols] for i in range(0, n, cols)]
             gw = max(sum(d.rendered.width for d in row) for row in grid)
             gh = sum(max(d.rendered.height for d in row) for row in grid)
             avail_w = width - 2 * PAD_PX - GAP_PX * (cols - 1)
@@ -152,6 +200,8 @@ class OfficeCanvas(Gtk.Widget):
     def do_snapshot(self, snap: Gtk.Snapshot) -> None:
         w, h = self.get_width(), self.get_height()
         s, placed = self._arrange(w, h)
+        self._scale, self._placed = s, placed
+        show_tags = s >= self.TAG_MIN_SCALE
         for d, x, y in placed:
             r = d.rendered
             tex = d.texture_for(s)
@@ -159,14 +209,15 @@ class OfficeCanvas(Gtk.Widget):
                 else Gsk.ScalingFilter.LINEAR
             snap.append_scaled_texture(tex, filt, _rect(x, y, r.width * s, r.height * s))
             self._sign(snap, d.view, x, y - SIGN_H + 2, r.width * s)
-            cell = scene.DESK_W * s
+            if not show_tags:
+                continue
             taken: list[tuple] = []
             for a in sorted(r.anchors, key=lambda a: (a.y, a.x)):
                 p = a.person
                 if p.filler or not p.name:
                     continue
                 self._name_tag(snap, p.name, p.light, x + a.x * s, y + (a.y - 2) * s,
-                               int(max(56, cell * 1.9)), taken)
+                               int(max(90, 64 * s)), taken)
 
     def _pill(self, snap, x, y, w, h, rgba) -> None:
         rr = Gsk.RoundedRect()

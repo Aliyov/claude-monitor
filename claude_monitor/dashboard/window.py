@@ -84,6 +84,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._dirty = False
         self._tick_id = 0
         self._last_rev = -1
+        self._sidebar_compact = False
 
         self.toasts = Adw.ToastOverlay()
         self.set_content(self.toasts)
@@ -138,7 +139,8 @@ class MainWindow(Adw.ApplicationWindow):
         icon = Gtk.Image.new_from_icon_name("io.github.ClaudeMonitor")
         icon.set_pixel_size(22)
         brand.append(icon)
-        brand.append(label("Claude Monitor", "cm-brand-title"))
+        self._brand_label = label("Claude Monitor", "cm-brand-title")
+        brand.append(self._brand_label)
         sb_hb.set_title_widget(brand)
         menu = Gio.Menu()
         menu.append("Preferences", "win.preferences")
@@ -146,22 +148,28 @@ class MainWindow(Adw.ApplicationWindow):
         menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text="Main Menu")
         menu_btn.set_primary(True)
         sb_hb.pack_end(menu_btn)
+        self._menu_btn = menu_btn
         sb_tv.add_top_bar(sb_hb)
 
         self.sidebar = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.sidebar.add_css_class("navigation-sidebar")
         self.sidebar.add_css_class("cm-sidebar")
         self._badges: dict[str, Gtk.Label] = {}
+        self._row_tails: list[Gtk.Box] = []
         for pid, title, icon_name in PAGES:
             row = Gtk.ListBoxRow()
             row.page_id = pid
             box = Gtk.Box(spacing=12)
             box.append(Gtk.Image.new_from_icon_name(icon_name))
-            box.append(label(title))
-            box.append(Gtk.Box(hexpand=True))
+            tail = Gtk.Box(spacing=12, hexpand=True)
+            tail.append(label(title))
+            tail.append(Gtk.Box(hexpand=True))
             badge = label("", "cm-badge", xalign=0.5)
             badge.set_visible(False)
-            box.append(badge)
+            tail.append(badge)
+            box.append(tail)
+            row.set_tooltip_text(title)
+            self._row_tails.append(tail)
             self._badges[pid] = badge
             row.set_child(box)
             self.sidebar.append(row)
@@ -182,6 +190,7 @@ class MainWindow(Adw.ApplicationWindow):
         foot.append(self.foot_status)
         foot.append(self.foot_index)
         sb_box.append(foot)
+        self._foot = foot
         sb_tv.set_content(sb_box)
         sidebar_page = Adw.NavigationPage(title="Claude Monitor")
         sidebar_page.set_child(sb_tv)
@@ -254,8 +263,25 @@ class MainWindow(Adw.ApplicationWindow):
                 page.on_snapshot(self.snapshot)
         return page
 
+    def set_sidebar_compact(self, compact: bool) -> None:
+        """Icon-only sidebar rail, used while the View shows one department
+        enlarged so the office gets the space."""
+        if compact == self._sidebar_compact:
+            return
+        self._sidebar_compact = compact
+        self.split.set_min_sidebar_width(58 if compact else 220)
+        self.split.set_max_sidebar_width(58 if compact else 280)
+        for w in (*self._row_tails, self._brand_label, self._menu_btn, self._foot):
+            w.set_visible(not compact)
+        if compact:
+            self.sidebar.add_css_class("cm-rail")
+        else:
+            self.sidebar.remove_css_class("cm-rail")
+
     def _show_page(self, page_id: str) -> Page:
         page = self.get_page(page_id)
+        if page_id != "office":
+            self.set_sidebar_compact(False)
         self._current = page_id
         self.content_stack.set_visible_child_name(page_id)
         self.content_page.set_title(dict((p[0], p[1]) for p in PAGES)[page_id])

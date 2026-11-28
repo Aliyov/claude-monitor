@@ -239,3 +239,5 @@ listview.cm-list > row:hover { background: none; }
 .cm-dot.light-yellow { background-color: #f0be32; }
 .cm-dot.light-green  { background-color: #4ec464; }
 .cm-dot.light-grey   { background-color: #9a9a9a; }
+.cm-rail row { padding-left: 0; padding-right: 0; }
+.cm-rail row > box { margin-left: 8px; }

@@ -121,5 +121,21 @@ class SeatingTest(unittest.TestCase):
         self.assertEqual([v.lit for v in model.build_all(snap)], [True, False])
 
 
+
+class SceneTest(unittest.TestCase):
+    def test_render_every_kind_of_department(self):
+        from claude_monitor.dashboard.office import scene
+        s = session("busy", [agent("e1", "Explore", built_in=True, started=1),
+                             agent("v1", "ver", started=2), agent("v2", "ver", started=3)])
+        cases = [model.build(dep([ra(f"a{i}", i) for i in range(9)]), s),
+                 model.build(dep(), session("waiting")),
+                 model.build(dep([ra("impl", 0)], lit=False), None)]
+        for v in cases:
+            r = scene.render(v)
+            self.assertEqual((r.surface.get_width(), r.surface.get_height()), (r.width, r.height))
+            lit_people = [p for p in v.people if p.light != model.OFF]
+            self.assertEqual(sorted(a.person.key for a in r.anchors), sorted(p.key for p in lit_people))
+
+
 if __name__ == "__main__":
     unittest.main()
