@@ -99,6 +99,10 @@ office. The daemon supplies only facts; the animation lives in the dashboard.
   window is in the background, 0 when hidden, minimised or when the desktop
   asks for reduced animations. Measured: ~2 ms per frame, ~1 % of one core
   on top of the idle dashboard.
+- Interaction: click a department to enlarge it (the sidebar collapses to an
+  icon rail), wheel / pinch to zoom around the pointer (100–500 %), drag to
+  pan, click a person for a popover (name, role, status, model, effort,
+  current tool, task, "Open Session"). Esc steps back.
 - Only real data drives it: lamp colours and tool bubbles come from the
   snapshot; chat bubbles are decorative dots; the wall clock and window sky
   follow local time.

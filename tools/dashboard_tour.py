@@ -39,6 +39,35 @@ def shot(name):
     print("saved", path, flush=True)
 
 
+def shot_widget(widget, name):
+    """Render one widget (e.g. a popover's content) on its own."""
+    print("popover visible:", widget.get_parent().get_visible() if widget.get_parent() else None, flush=True)
+    w, h = widget.get_width(), widget.get_height()
+    p = Gtk.WidgetPaintable.new(widget)
+    snap = Gtk.Snapshot()
+    from gi.repository import Gdk, Graphene
+    bg = Gdk.RGBA()
+    bg.parse("#2e2e32")
+    snap.append_color(bg, Graphene.Rect().init(0, 0, w, h))
+    p.snapshot(snap, w, h)
+    node = snap.to_node()
+    if node is None:
+        print("no node for", name)
+        return
+    tex = app.window.get_renderer().render_texture(node, None)
+    path = os.path.join(out, f"{name}.png")
+    tex.save_to_png(path)
+    print("saved", path, flush=True)
+
+
+def open_person(win, role):
+    page = win.get_page("office")
+    for hx, hy, hw, hh, person, view in page.canvas._hits:
+        if person.role == role:   # a real click in the middle of the sprite
+            page.canvas._on_click(None, 1, hx + hw / 2, hy + hh / 2)
+            return
+
+
 def first_live():
     snap = app.window.snapshot or {}
     live = snap.get("sessions") or []
@@ -56,6 +85,12 @@ def plan():
         (2500, lambda: shot("00-view")),
         (100, lambda: win.get_page("office").canvas.set_focus_slot(0)),
         (600, lambda: shot("00b-view-department")),
+        (100, lambda: win.get_page("office").canvas.zoom_at(1.8)),
+        (700, lambda: shot("00c-view-zoomed")),
+        (100, lambda: win.get_page("office").canvas.reset_view()),
+        (400, lambda: open_person(win, "lead")),
+        (900, lambda: shot_widget(win.get_page("office").popover.get_child(), "00d-person-popover")),
+        (100, lambda: win.get_page("office").popover.popdown()),
         (100, lambda: win.get_page("office").canvas.set_focus_slot(None)),
         (100, lambda: win.navigate("overview")),
         (1200, lambda: shot("01-overview")),

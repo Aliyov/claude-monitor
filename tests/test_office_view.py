@@ -153,5 +153,17 @@ class SceneTest(unittest.TestCase):
         self.assertNotEqual(scene.layout_key(a, "day"), scene.layout_key(a, "night"))
 
 
+
+class PopupTextTest(unittest.TestCase):
+    def test_pretty_model(self):
+        from claude_monitor.dashboard.pages.office import pretty_model
+        self.assertEqual(pretty_model("claude-opus-5-5"), "Opus 5.5")
+        self.assertEqual(pretty_model("claude-haiku-5"), "Haiku 5")
+        self.assertEqual(pretty_model("sonnet"), "Sonnet")
+        self.assertEqual(pretty_model("inherit"), "Same as the session")
+        self.assertEqual(pretty_model(None), "—")
+        self.assertEqual(pretty_model("gpt-x"), "gpt-x")
+
+
 if __name__ == "__main__":
     unittest.main()

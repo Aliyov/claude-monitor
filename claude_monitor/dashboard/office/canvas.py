@@ -28,7 +28,8 @@ from .scene import Scene, layout_key, phase_for
 GAP_PX = 22
 PAD_PX = 12
 SIGN_H = 30
-MAX_PRESCALE = 6
+MAX_PRESCALE = 4      # bigger zooms upscale the k=4 textures with nearest neighbour
+ZOOM_MIN, ZOOM_MAX = 1.0, 5.0
 LABEL_FONT = "Sans Bold 8"
 SIGN_FONT = "Sans Bold 10"
 DOT_RGBA = {RED: (0.91, 0.27, 0.24), YELLOW: (0.94, 0.75, 0.2), GREEN: (0.31, 0.77, 0.39),
@@ -74,7 +75,7 @@ class OfficeCanvas(Gtk.Widget):
     __gtype_name__ = "CmOfficeCanvas"
     TAG_MIN_SCALE = 1.25
 
-    def __init__(self, on_focus=None) -> None:
+    def __init__(self, on_focus=None, on_person=None, on_zoom=None) -> None:
         super().__init__(hexpand=True, vexpand=True)
         self.add_css_class("cm-office-canvas")
         self._depts: list[_Dept] = []
@@ -89,18 +90,57 @@ class OfficeCanvas(Gtk.Widget):
         self._root_handler = None
         self.focus_slot: int | None = None
         self._on_focus = on_focus
+        self._on_person = on_person
+        self._popovers: list = []
+        self._on_zoom = on_zoom
         self.last_frame_ms = 0.0
+        self.zoom = 1.0
+        self._pan = [0.0, 0.0]
+        self._pointer = None
+        self._hits: list = []          # (x, y, w, h, person, dept view) in paint order
+        self._drag0 = None
+        self._pinch0 = None
         click = Gtk.GestureClick()
         click.connect("released", self._on_click)
         self.add_controller(click)
         motion = Gtk.EventControllerMotion()
         motion.connect("motion", self._on_motion)
+        motion.connect("leave", lambda *_: setattr(self, "_pointer", None))
         self.add_controller(motion)
+        scroll = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
+        scroll.connect("scroll", self._on_scroll)
+        self.add_controller(scroll)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._on_drag_begin)
+        drag.connect("drag-update", self._on_drag_update)
+        drag.connect("drag-end", lambda *_: (setattr(self, "_drag0", None), self.set_cursor(None)))
+        self.add_controller(drag)
+        pinch = Gtk.GestureZoom()
+        pinch.connect("begin", self._on_pinch_begin)
+        pinch.connect("scale-changed", self._on_pinch)
+        self.add_controller(pinch)
         self.connect("map", self._on_map)
         self.connect("unmap", lambda *_: self._update_anim())
         settings = Gtk.Settings.get_default()
         if settings is not None:
             settings.connect("notify::gtk-enable-animations", lambda *_: self._update_anim())
+
+    # ------------------------------------------------------------ popovers
+    def add_popover(self, pop: Gtk.Popover) -> None:
+        self._popovers.append(pop)
+        pop.set_parent(self)
+
+    def do_size_allocate(self, width: int, height: int, baseline: int) -> None:
+        for pop in self._popovers:
+            pop.present()
+
+    def do_dispose(self) -> None:
+        for pop in self._popovers:
+            pop.unparent()
+        self._popovers = []
+        if self._timer:
+            GLib.source_remove(self._timer)
+            self._timer = 0
 
     # ------------------------------------------------------------ animation
     @staticmethod
@@ -152,6 +192,7 @@ class OfficeCanvas(Gtk.Widget):
             return
         self.focus_slot = slot
         self.set_cursor(None)
+        self.reset_view()
         self._update_anim()
         self.queue_draw()
         if self._on_focus:
@@ -165,17 +206,95 @@ class OfficeCanvas(Gtk.Widget):
                 return d
         return None
 
+    def person_at(self, x, y):
+        """Topmost person sprite under (x, y): (person, department view, rect)."""
+        for hx, hy, hw, hh, person, view in reversed(self._hits):
+            # ignore the transparent margins of the sprite
+            if hx + hw * 0.2 <= x <= hx + hw * 0.8 and hy + hh * 0.12 <= y <= hy + hh * 0.98:
+                return person, view, (hx, hy, hw, hh)
+        return None
+
     def _on_click(self, gesture, n_press, x, y) -> None:
+        if self.focus_slot is not None or len(self._depts) == 1 or self._scale >= self.TAG_MIN_SCALE:
+            hit = self.person_at(x, y)
+            if hit is not None and self._on_person:
+                self._on_person(*hit)
+                return
         if self.focus_slot is None:
             d = self._dept_at(x, y)
-            if d is not None:
+            if d is not None and len(self._depts) > 1:
                 self.set_focus_slot(d.view.slot)
 
     def _on_motion(self, _ctl, x, y) -> None:
-        if self.focus_slot is None and self._dept_at(x, y) is not None:
+        self._pointer = (x, y)
+        if self._drag0 is not None:
+            return
+        clickable = self.person_at(x, y) is not None and (self.focus_slot is not None or len(self._depts) == 1
+                                                           or self._scale >= self.TAG_MIN_SCALE)
+        if clickable or (self.focus_slot is None and len(self._depts) > 1 and self._dept_at(x, y) is not None):
             self.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
         else:
             self.set_cursor(None)
+
+    # ------------------------------------------------------------ zoom/pan
+    def reset_view(self) -> None:
+        self.zoom, self._pan = 1.0, [0.0, 0.0]
+        self.queue_draw()
+        if self._on_zoom:
+            self._on_zoom(self.zoom)
+
+    def zoom_at(self, factor: float, px=None, py=None) -> None:
+        w, h = self.get_width(), self.get_height()
+        if px is None:
+            px, py = w / 2, h / 2
+        z0 = self.zoom
+        z1 = max(ZOOM_MIN, min(ZOOM_MAX, z0 * factor))
+        if abs(z1 - z0) < 1e-6:
+            return
+        # keep the content point under (px, py) in place
+        for k, (p, c) in enumerate(((px, w / 2), (py, h / 2))):
+            u = (p - c - self._pan[k]) / z0
+            self._pan[k] = p - c - u * z1
+        self.zoom = z1
+        self._clamp_pan()
+        self.queue_draw()
+        if self._on_zoom:
+            self._on_zoom(self.zoom)
+
+    def _clamp_pan(self) -> None:
+        w, h = self.get_width(), self.get_height()
+        for k, size in enumerate((w, h)):
+            lim = size / 2 * (self.zoom - 1)
+            self._pan[k] = max(-lim, min(lim, self._pan[k]))
+
+    def _on_scroll(self, ctl, dx, dy) -> bool:
+        if dy == 0:
+            return False
+        p = self._pointer or (None, None)
+        self.zoom_at(1.15 ** (-dy), *p)
+        return True
+
+    def _on_drag_begin(self, gesture, x, y) -> None:
+        self._drag0 = (self._pan[0], self._pan[1]) if self.zoom > 1.0 else None
+        if self._drag0 is not None:
+            self.set_cursor(Gdk.Cursor.new_from_name("grabbing", None))
+
+    def _on_drag_update(self, gesture, dx, dy) -> None:
+        if self._drag0 is None:
+            return
+        self._pan = [self._drag0[0] + dx, self._drag0[1] + dy]
+        self._clamp_pan()
+        self.queue_draw()
+
+    def _on_pinch_begin(self, gesture, _seq) -> None:
+        ok, cx, cy = gesture.get_bounding_box_center()
+        self._pinch0 = (self.zoom, cx if ok else None, cy if ok else None)
+
+    def _on_pinch(self, gesture, scale) -> None:
+        if self._pinch0 is None:
+            return
+        z0, cx, cy = self._pinch0
+        self.zoom_at((z0 * scale) / self.zoom, cx, cy)
 
     # ----------------------------------------------------------------- data
     def set_views(self, views: list[DepartmentView]) -> None:
@@ -239,14 +358,13 @@ class OfficeCanvas(Gtk.Widget):
     def _tex(self, d: _Dept, sid: str, surf, k: int) -> Gdk.Texture:
         shared = sid[0] in "pb"
         cache = self._shared_tex if shared else d.tex
-        key = (sid, k)
-        t = cache.get(key)
-        if t is None:
+        hit = cache.get(sid)
+        if hit is None or hit[0] != k or hit[1] is not surf:
             if len(cache) > 2500:
                 cache.clear()
-            t = _texture(surf, k)
-            cache[key] = t
-        return t
+            hit = (k, surf, _texture(surf, k))
+            cache[sid] = hit
+        return hit[2]
 
     def _layout(self, text: str, font: str, max_w: int) -> Pango.Layout:
         k = (text, font, max_w)
@@ -264,10 +382,17 @@ class OfficeCanvas(Gtk.Widget):
     def do_snapshot(self, snap: Gtk.Snapshot) -> None:
         t0 = time.perf_counter()
         w, h = self.get_width(), self.get_height()
-        s, placed = self._arrange(w, h)
+        s0, placed0 = self._arrange(w, h)
+        z = self.zoom
+        s = s0 * z
+        px, py = self._pan
+        placed = [(d, (x - w / 2) * z + w / 2 + px, (y - h / 2) * z + h / 2 + py) for d, x, y in placed0]
         self._scale, self._placed = s, placed
+        self._hits = hits = []
         k = max(1, min(MAX_PRESCALE, math.ceil(s - 0.01)))
-        filt = Gsk.ScalingFilter.NEAREST if abs(k - s) < 0.01 else Gsk.ScalingFilter.LINEAR
+        filt = (Gsk.ScalingFilter.NEAREST if abs(k - s) < 0.01 or s > k
+                else Gsk.ScalingFilter.LINEAR)
+        snap.push_clip(_rect(0, 0, w, h))
         now = time.time()
         lt = time.localtime(now)
         show_tags = s >= self.TAG_MIN_SCALE
@@ -278,8 +403,12 @@ class OfficeCanvas(Gtk.Widget):
             fr = sc.frame(now, lt.tm_hour, lt.tm_min)
             for dr in fr.draws:
                 sw, sh_ = dr.surf.get_width(), dr.surf.get_height()
-                snap.append_scaled_texture(self._tex(d, dr.sid, dr.surf, k), filt,
-                                           _rect(x + dr.x * s, y + dr.y * s, sw * s, sh_ * s))
+                rx, ry, rw, rh = x + dr.x * s, y + dr.y * s, sw * s, sh_ * s
+                if rx > w or ry > h or rx + rw < 0 or ry + rh < 0:
+                    continue
+                snap.append_scaled_texture(self._tex(d, dr.sid, dr.surf, k), filt, _rect(rx, ry, rw, rh))
+                if dr.person is not None:
+                    hits.append((rx, ry, rw, rh, dr.person, d.view))
             self._sign(snap, d.view, x, y - SIGN_H + 2, sc.width * s)
             if not show_tags:
                 continue
@@ -288,7 +417,9 @@ class OfficeCanvas(Gtk.Widget):
                 p = tg.person
                 if p.filler or not p.name:
                     continue
-                self._name_tag(snap, p.name, p.light, x + tg.x * s, y + tg.y * s, int(max(90, 64 * s)), taken)
+                self._name_tag(snap, p.name, p.light, x + tg.x * s, y + tg.y * s, int(min(220, max(90, 64 * s))),
+                               taken)
+        snap.pop()
         self.last_frame_ms = (time.perf_counter() - t0) * 1000
 
     def _pill(self, snap, x, y, w, h, rgba) -> None:

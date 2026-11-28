@@ -5,6 +5,15 @@ top-bar indicator, a full dashboard, desktop notifications and session
 history. Local only: no network, no tokens, no root, and Claude Code's
 configuration is never touched unless you opt in.
 
+![Office View](docs/screenshots/office.png)
+
+The **View** page shows every live session as an animated pixel-art office:
+the session is the lead in the glass office, its subagents work at desks
+(red lamp = working, yellow = waiting, green = idle), idle agents wander to
+the coffee bar. Click a department to enlarge it, scroll to zoom, click
+someone for details. Only real data drives it; it costs about 1 % CPU and
+stops when hidden.
+
 ![Overview](docs/screenshots/overview.png)
 
 | Session detail | Statistics |
@@ -20,7 +29,7 @@ configuration is never touched unless you opt in.
 | Component | What it is |
 |---|---|
 | `claude-monitord` | Background service (systemd user unit). Reads `~/.claude` read-only, keeps history in SQLite, exposes D-Bus. |
-| `claude-monitor-dashboard` | GTK4 / libadwaita dashboard: overview, live sessions & agents, timeline, history, statistics, settings. |
+| `claude-monitor-dashboard` | GTK4 / libadwaita dashboard: animated office View, overview, live sessions & agents, timeline, history, statistics, settings. |
 | GNOME Shell extension | Top-bar indicator: session count, 5-hour usage, and a detail menu. |
 | `claude-monitor` | CLI: `claude-monitor status`, `claude-monitor timeline`. |
 | `claude-monitor-statusline` | *Optional* status-line tee that lets the monitor see plan-limit percentages. |

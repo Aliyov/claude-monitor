@@ -90,6 +90,7 @@ class Draw:
     surf: cairo.ImageSurface
     x: int
     y: int
+    person: Person | None = None
 
 
 @dataclass
@@ -384,7 +385,7 @@ class Scene:
             L = look.look_for(p.name, p.key, p.role)
             sid, surf = look.sprite(L, af.pose, af.frame, af.flip)
             x, y = self.pen.ipt(af.i, af.j)
-            out.append(Draw(af.i + af.j, sid, surf, x - (look.AX + 1), y - (look.AY + 1)))
+            out.append(Draw(af.i + af.j, sid, surf, x - (look.AX + 1), y - (look.AY + 1), p))
             head = y + look.head_top(af.pose, af.frame)
             tag_y = head
             if af.bubble:

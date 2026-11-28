@@ -241,3 +241,5 @@ listview.cm-list > row:hover { background: none; }
 .cm-dot.light-grey   { background-color: #9a9a9a; }
 .cm-rail row { padding-left: 0; padding-right: 0; }
 .cm-rail row > box { margin-left: 8px; }
+.cm-zoom-label { min-width: 52px; font-feature-settings: "tnum"; }
+.cm-person-popover .heading { font-size: 1.05em; }
