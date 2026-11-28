@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_monitor.dashboard.app import DashboardApp  # noqa: E402
+from claudeville.dashboard.app import DashboardApp  # noqa: E402
 from gi.repository import GLib, Gtk  # noqa: E402
 
 out = sys.argv[1] if len(sys.argv) > 1 else "."

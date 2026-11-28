@@ -4,7 +4,7 @@ Run: python3 -m unittest discover -s tests -t .
 """
 import unittest
 
-from claude_monitor.dashboard.office import actors, model, scene
+from claudeville.dashboard.office import actors, model, scene
 from tests.test_office_view import agent, dep, ra, session
 
 

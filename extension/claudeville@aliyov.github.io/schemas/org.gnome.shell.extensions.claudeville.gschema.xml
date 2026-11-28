@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="claudeville">
+  <schema id="org.gnome.shell.extensions.claudeville"
+          path="/org/gnome/shell/extensions/claudeville/">
+    <key name="max-sessions" type="i">
+      <range min="1" max="20"/>
+      <default>5</default>
+      <summary>Maximum number of sessions listed</summary>
+    </key>
+    <key name="compact-mode" type="b">
+      <default>false</default>
+      <summary>Compact mode (hide activity and resource lines)</summary>
+    </key>
+    <key name="reduce-animations" type="b">
+      <default>false</default>
+      <summary>Disable the pulsing status animation</summary>
+    </key>
+  </schema>
+</schemalist>

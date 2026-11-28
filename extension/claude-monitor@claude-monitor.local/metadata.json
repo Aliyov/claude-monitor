@@ -1,9 +1,0 @@
-{
-  "uuid": "claude-monitor@claude-monitor.local",
-  "name": "Claude Monitor",
-  "description": "Top-bar indicator for local Claude Code sessions: plan usage, live agents, current activity, CPU and memory. Reads data from the local claude-monitord service only; never contacts any server.",
-  "shell-version": ["50"],
-  "settings-schema": "org.gnome.shell.extensions.claude-monitor",
-  "url": "https://github.com/claude-monitor/claude-monitor",
-  "version-name": "0.1.0"
-}

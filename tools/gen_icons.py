@@ -5,7 +5,7 @@ GTK 4.22's symbolic icon loader fills every path (it ignores strokes), so
 line art is expanded here into filled polygons: thick segments with round
 caps, even-odd rings, etc.
 
-    python3 tools/gen_icons.py  # writes claude_monitor/dashboard/icons/
+    python3 tools/gen_icons.py  # writes claudeville/dashboard/icons/
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import math
 import os
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "claude_monitor", "dashboard", "icons")
+                   "claudeville", "dashboard", "icons")
 C = "#222"
 
 

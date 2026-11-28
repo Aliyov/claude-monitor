@@ -4,7 +4,7 @@ Run: python3 -m unittest discover -s tests -t .
 """
 import unittest
 
-from claude_monitor.dashboard.office import model
+from claudeville.dashboard.office import model
 
 
 def ra(name, rank, model_="opus", effort=None):
@@ -124,7 +124,7 @@ class SeatingTest(unittest.TestCase):
 
 class SceneTest(unittest.TestCase):
     def test_build_and_frame_every_kind_of_department(self):
-        from claude_monitor.dashboard.office import scene
+        from claudeville.dashboard.office import scene
         s = session("busy", [agent("e1", "Explore", built_in=True, started=1),
                              agent("v1", "ver", started=2), agent("v2", "ver", started=3)])
         cases = [model.build(dep([ra(f"a{i}", i) for i in range(9)]), s),
@@ -146,7 +146,7 @@ class SceneTest(unittest.TestCase):
                     self.assertTrue(-2 <= d.x and d.x + d.surf.get_width() <= sc.width + 2, d.sid)
 
     def test_layout_key_ignores_status_changes(self):
-        from claude_monitor.dashboard.office import scene
+        from claudeville.dashboard.office import scene
         a = model.build(dep([ra("impl", 0)]), session("idle"))
         b = model.build(dep([ra("impl", 0)]), session("busy", [agent("x", "impl")]))
         self.assertEqual(scene.layout_key(a, "day"), scene.layout_key(b, "day"))
@@ -156,7 +156,7 @@ class SceneTest(unittest.TestCase):
 
 class PopupTextTest(unittest.TestCase):
     def test_pretty_model(self):
-        from claude_monitor.dashboard.pages.office import pretty_model
+        from claudeville.dashboard.pages.office import pretty_model
         self.assertEqual(pretty_model("claude-opus-5-5"), "Opus 5.5")
         self.assertEqual(pretty_model("claude-haiku-5"), "Haiku 5")
         self.assertEqual(pretty_model("sonnet"), "Sonnet")

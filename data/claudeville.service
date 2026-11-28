@@ -1,0 +1,31 @@
+[Unit]
+Description=Claudeville — local monitoring of Claude Code sessions
+Documentation=file://%h/.local/share/claudeville/app/docs/ARCHITECTURE.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=io.github.aliyov.Claudeville
+ExecStart=%h/.local/bin/claudevilled
+Restart=on-failure
+RestartSec=3
+# Low priority: never compete with Claude Code or your work.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
+MemoryHigh=120M
+MemoryMax=250M
+# Hardening: the whole home dir (including ~/.claude) is read-only for the
+# daemon, except its own data/state/config directories.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/claudeville %h/.local/state/claudeville %h/.config/claudeville
+PrivateTmp=yes
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,4 +1,4 @@
-# Claude Monitor — Interface Contract (v1)
+# Claudeville — Interface Contract (v1)
 
 This file is the single source of truth shared by the daemon, the dashboard
 and the GNOME Shell extension. Change it deliberately and update all three.
@@ -16,16 +16,16 @@ and the GNOME Shell extension. Change it deliberately and update all three.
 
 | Purpose | Path |
 |---|---|
-| Database (daemon-owned) | `~/.local/share/claude-monitor/monitor.db` |
-| User config (JSON, daemon watches it) | `~/.config/claude-monitor/config.json` |
-| Status-line drops (optional tee) | `~/.local/state/claude-monitor/statusline/<session_id>.json` |
-| Hook event drops (optional) | `~/.local/state/claude-monitor/hooks/` |
+| Database (daemon-owned) | `~/.local/share/claudeville/monitor.db` |
+| User config (JSON, daemon watches it) | `~/.config/claudeville/config.json` |
+| Status-line drops (optional tee) | `~/.local/state/claudeville/statusline/<session_id>.json` |
+| Hook event drops (optional) | `~/.local/state/claudeville/hooks/` |
 
 ## D-Bus (session bus)
 
-- Bus name: `io.github.ClaudeMonitor`
-- Object path: `/io/github/ClaudeMonitor`
-- Interface: `io.github.ClaudeMonitor1`
+- Bus name: `io.github.aliyov.Claudeville`
+- Object path: `/io/github/aliyov/Claudeville`
+- Interface: `io.github.aliyov.Claudeville1`
 
 All methods return one JSON string (`s`). Keeping the payload as JSON makes
 GJS and Python clients trivial and the interface easy to version.
@@ -82,9 +82,9 @@ running" state) and reconnect when the name appears (`Gio.bus_watch_name`).
 
 // Session (live)
 {
-  "session_id": "uuid", "pid": 107202, "name": "claude-monitor-8b",
-  "title": "Build Claude Monitor" | null,     // ai-title from transcript
-  "project": "Claude_Monitor", "cwd": "/home/...", "git_branch": "main" | null,
+  "session_id": "uuid", "pid": 107202, "name": "claudeville-8b",
+  "title": "Build Claudeville" | null,     // ai-title from transcript
+  "project": "my-project", "cwd": "/home/...", "git_branch": "main" | null,
   "kind": "interactive", "entrypoint": "cli", "version": "2.1.332",
   "model": "claude-opus-5-5" | null,
   "context_percent": 41.0 | null, // context window used, only with status-line tee
@@ -127,7 +127,7 @@ running" state) and reconnect when the name appears (`Gio.bus_watch_name`).
   "slot": 0,                       // position; may shift down when an expired slot is removed
   "lit": true,                     // a live session occupies it
   "session_id": "uuid" | null,     // join with Snapshot.sessions for status/agents
-  "project": "Claude_Monitor" | null, "cwd": "/home/..." | null,  // current or last host
+  "project": "my-project" | null, "cwd": "/home/..." | null,  // current or last host
   "last_used_at": ms | null,
   "roster": Roster
 }
@@ -170,7 +170,7 @@ running" state) and reconnect when the name appears (`Gio.bus_watch_name`).
 // Event
 {
   "id": 1234, "session_id": "uuid", "agent_id": null | "a12…",
-  "project": "Claude_Monitor", "ts": 1795620000000,
+  "project": "my-project", "ts": 1795620000000,
   "kind": "tool" | "error" | "prompt" | "turn_end" | "subagent_start" |
           "subagent_end" | "compact" | "status" | "session_start" |
           "session_end" | "limit",

@@ -1,4 +1,4 @@
-# Claude Monitor — Architecture
+# Claudeville — Architecture
 
 ## Goals and hard constraints
 
@@ -28,9 +28,9 @@ user's OAuth token); the per-session messaging sockets (risk of interference).
 ```
  Claude Code sessions ──writes──► ~/.claude (read-only to us; kernel-enforced by systemd ProtectHome)
                                    │
-                    optional tee ──┼──► ~/.local/state/claude-monitor/statusline/<sid>.json
+                    optional tee ──┼──► ~/.local/state/claudeville/statusline/<sid>.json
                                    ▼
- claude-monitord (Python, GLib main loop, systemd --user, Nice=10, idle I/O)
+ claudevilled (Python, GLib main loop, systemd --user, Nice=10, idle I/O)
    registry.py  ── 1 s poll of sessions/*.json (listdir + stat)
    ingest.py    ── resumable byte-offset JSONL tailer, defensive parser
    procmon.py   ── 2 s /proc sampling of live process trees
@@ -39,11 +39,11 @@ user's OAuth token); the per-session messaging sockets (risk of interference).
    office.py    ── department slots for the View page (persisted in kv)
    engine.py    ── state machine, notifications, ≤1 Hz coalesced change signals
    store.py     ── SQLite WAL (~6 MB for 500 MB of transcripts)
-   dbus_service ── io.github.ClaudeMonitor1 (JSON payloads, see CONTRACT.md)
+   dbus_service ── io.github.aliyov.Claudeville1 (JSON payloads, see CONTRACT.md)
         │ D-Bus session bus
         ├──► Dashboard (GTK4 + libadwaita, Python)
         ├──► GNOME Shell extension (GJS): panel indicator
-        └──► claude-monitor CLI
+        └──► claudeville CLI
 ```
 
 ### Why these choices
@@ -85,7 +85,7 @@ office. The daemon supplies only facts; the animation lives in the dashboard.
 
 ### Office View rendering (dashboard)
 
-`claude_monitor/dashboard/office/`: `model.py` (who sits where, lights),
+`claudeville/dashboard/office/`: `model.py` (who sits where, lights),
 `actors.py` (behaviour: typing, walks to coffee/whiteboard/cooler/lounge,
 "..." chats; working people stay seated), `look.py` (characters, bubbles),
 `art.py` (furniture, walls), `iso.py` (isometric pixel pen), `scene.py`
@@ -122,7 +122,7 @@ office. The daemon supplies only facts; the animation lives in the dashboard.
 - Prompt and response text are **never stored**. Stored: tool name, short
   summary (file name, first line of a command, search pattern), path/command
   detail (truncated; commands can be disabled in settings), timestamps, tokens.
-- All data stays in `~/.local/share/claude-monitor`, mode 0700. No network code.
+- All data stays in `~/.local/share/claudeville`, mode 0700. No network code.
 - Retention pruning (default 180 days) for events.
 
 ## Known limitations

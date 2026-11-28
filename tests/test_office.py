@@ -17,7 +17,7 @@ def agent_file(d, fname, body):
 
 class FrontmatterTest(unittest.TestCase):
     def setUp(self):
-        from claude_monitor.daemon import roster
+        from claudeville.daemon import roster
         self.r = roster
 
     def test_flat_quoted_and_blocks(self):
@@ -40,7 +40,7 @@ class FrontmatterTest(unittest.TestCase):
 
 class RankTest(unittest.TestCase):
     def setUp(self):
-        from claude_monitor.daemon import roster
+        from claudeville.daemon import roster
         self.r = roster
 
     def test_family_and_version(self):
@@ -66,7 +66,7 @@ class RosterTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         os.environ["CLAUDE_CONFIG_DIR"] = str(root / "claude")
-        from claude_monitor.daemon import paths, roster
+        from claudeville.daemon import paths, roster
         importlib.reload(paths)
         importlib.reload(roster)
         self.roster = roster
@@ -174,7 +174,7 @@ def sess(sid, project, started=0, cwd=None):
 
 class OfficeTest(unittest.TestCase):
     def setUp(self):
-        from claude_monitor.daemon import office
+        from claudeville.daemon import office
         self.office_mod = office
         self.store = FakeStore()
         self.o = office.Office(self.store)

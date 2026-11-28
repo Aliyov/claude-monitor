@@ -27,11 +27,11 @@ class IngestTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         os.environ["CLAUDE_CONFIG_DIR"] = str(root / "claude")
-        os.environ["CLAUDE_MONITOR_DATA_DIR"] = str(root / "data")
+        os.environ["CLAUDEVILLE_DATA_DIR"] = str(root / "data")
         os.environ["XDG_CONFIG_HOME"] = str(root / "cfg")
-        from claude_monitor.daemon import paths
+        from claudeville.daemon import paths
         importlib.reload(paths)
-        from claude_monitor.daemon import config, ingest, store
+        from claudeville.daemon import config, ingest, store
         for m in (config, ingest):
             importlib.reload(m)
         self.paths, self.ingest = paths, ingest
@@ -137,7 +137,7 @@ class IngestTest(unittest.TestCase):
         self.assertEqual((a["agent_id"], a["type"], a["description"], a["tool_calls"]),
                          ("x1", "Explore", "Find files", 1))
         self.assertEqual((a["built_in"], a["effort"]), (1, "low"))
-        from claude_monitor.daemon import queries
+        from claudeville.daemon import queries
         obj = queries.agent_obj(a, live_session=False)
         self.assertEqual((obj["built_in"], obj["effort"], obj["status"]), (True, "low", "done"))
         self.assertEqual(self.sess()["agent_count"], 1)
@@ -153,13 +153,13 @@ class IngestTest(unittest.TestCase):
 
 class SummaryTest(unittest.TestCase):
     def test_commands_can_be_hidden(self):
-        from claude_monitor.daemon.ingest import summarize_tool
+        from claudeville.daemon.ingest import summarize_tool
         s, d = summarize_tool("Bash", {"command": "export TOKEN=abc", "description": "Set env"},
                               store_commands=False)
         self.assertEqual((s, d), ("Set env", None))
 
     def test_mcp_name(self):
-        from claude_monitor.daemon.ingest import summarize_tool
+        from claudeville.daemon.ingest import summarize_tool
         self.assertEqual(summarize_tool("mcp__github__create_issue", {})[0], "github · create_issue")
 
 

@@ -1,10 +1,10 @@
-# Claude Monitor — GNOME Shell extension
+# Claudeville — GNOME Shell extension
 
 Floating widget + top-bar indicator for GNOME Shell 50. It is a thin client of
-the `claude-monitord` D-Bus service (`io.github.ClaudeMonitor`, see
+the `claudevilled` D-Bus service (`io.github.aliyov.Claudeville`, see
 `docs/CONTRACT.md`) and never reads `~/.claude` or talks to the network itself.
 
-UUID: `claude-monitor@claude-monitor.local`
+UUID: `claudeville@aliyov.github.io`
 
 ## Features
 
@@ -39,7 +39,7 @@ UUID: `claude-monitor@claude-monitor.local`
 ## Install (normally done by the project's install script)
 
 ```sh
-EXT=claude-monitor@claude-monitor.local
+EXT=claudeville@aliyov.github.io
 DEST=~/.local/share/gnome-shell/extensions/$EXT
 mkdir -p "$DEST"
 cp -r extension/$EXT/* "$DEST/"
@@ -54,7 +54,7 @@ needs a re-login, or disable + enable for most JS changes.
 ## Development
 
 - Logs: `journalctl --user -f -o cat /usr/bin/gnome-shell | grep -i claude`
-- Preferences: `gnome-extensions prefs claude-monitor@claude-monitor.local`
+- Preferences: `gnome-extensions prefs claudeville@aliyov.github.io`
 - Nested test shell (needs `mutter-devkit`, not installed on this machine):
   `dbus-run-session gnome-shell --devkit --wayland`
 - Syntax check: `for f in *.js; do node --input-type=module --check < $f; done`

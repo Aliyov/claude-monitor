@@ -1,0 +1,245 @@
+/* Claudeville dashboard styles.
+ * Uses libadwaita CSS variables so light/dark/high-contrast all work.
+ * Brand accent: Claude terracotta. Status colours follow docs/CONTRACT.md.
+ */
+
+/* ---------------------------------------------------------------- cards */
+.cm-card {
+  background-color: var(--card-bg-color);
+  color: var(--card-fg-color);
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--window-fg-color) 7%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, black 6%, transparent),
+              0 2px 8px color-mix(in srgb, black 4%, transparent);
+  padding: 16px;
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              box-shadow 180ms ease-out,
+              border-color 180ms ease-out,
+              background-color 180ms ease-out;
+}
+
+.cm-card.cm-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, #D97757 45%, transparent);
+  box-shadow: 0 4px 10px color-mix(in srgb, black 8%, transparent),
+              0 10px 24px color-mix(in srgb, black 8%, transparent);
+}
+
+.cm-card.cm-hover:active {
+  transform: translateY(0) scale(0.995);
+  transition-duration: 80ms;
+}
+
+.cm-card.cm-compact { padding: 12px 14px; }
+
+/* Session cards get a thin status stripe on the left. */
+.cm-session-card { padding: 14px 16px 14px 18px; }
+.cm-session-card.st-busy    { box-shadow: inset 3px 0 0 #3584e4, 0 1px 2px color-mix(in srgb, black 6%, transparent); }
+.cm-session-card.st-waiting { box-shadow: inset 3px 0 0 #e5a50a, 0 1px 2px color-mix(in srgb, black 6%, transparent); }
+.cm-session-card.st-blocked { box-shadow: inset 3px 0 0 #e01b24, 0 1px 2px color-mix(in srgb, black 6%, transparent); }
+.cm-session-card.st-idle    { box-shadow: inset 3px 0 0 #2ec27e, 0 1px 2px color-mix(in srgb, black 6%, transparent); }
+.cm-session-card.st-unknown { box-shadow: inset 3px 0 0 #9a9996, 0 1px 2px color-mix(in srgb, black 6%, transparent); }
+.cm-session-card.cm-hover:hover.st-busy    { box-shadow: inset 3px 0 0 #3584e4, 0 10px 24px color-mix(in srgb, black 9%, transparent); }
+.cm-session-card.cm-hover:hover.st-waiting { box-shadow: inset 3px 0 0 #e5a50a, 0 10px 24px color-mix(in srgb, black 9%, transparent); }
+.cm-session-card.cm-hover:hover.st-blocked { box-shadow: inset 3px 0 0 #e01b24, 0 10px 24px color-mix(in srgb, black 9%, transparent); }
+.cm-session-card.cm-hover:hover.st-idle    { box-shadow: inset 3px 0 0 #2ec27e, 0 10px 24px color-mix(in srgb, black 9%, transparent); }
+.cm-session-card.cm-hover:hover.st-unknown { box-shadow: inset 3px 0 0 #9a9996, 0 10px 24px color-mix(in srgb, black 9%, transparent); }
+
+/* FlowBox children should not draw their own selection/hover backgrounds. */
+flowbox.cm-grid > flowboxchild {
+  padding: 0;
+  background: none;
+  border-radius: 14px;
+  outline-offset: 2px;
+}
+flowbox.cm-grid > flowboxchild:hover,
+flowbox.cm-grid > flowboxchild:selected { background: none; }
+
+/* ----------------------------------------------------------- typography */
+.cm-section-title {
+  font-weight: 700;
+  font-size: 1.05em;
+  margin-top: 8px;
+}
+.cm-eyebrow {
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  opacity: 0.62;
+}
+.cm-big-number {
+  font-size: 1.9em;
+  font-weight: 800;
+  font-feature-settings: "tnum";
+}
+.cm-mid-number {
+  font-size: 1.3em;
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+.cm-tnum { font-feature-settings: "tnum"; }
+.cm-mono {
+  font-family: monospace;
+  font-size: 0.92em;
+}
+.cm-muted { opacity: 0.62; }
+.cm-faint { opacity: 0.45; }
+.cm-stale { color: var(--warning-color); }
+.cm-error-text { color: var(--error-color); }
+
+/* ---------------------------------------------------------- status dots */
+.cm-dot {
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 999px;
+  background-color: #9a9996;
+}
+.cm-dot.small { min-width: 8px; min-height: 8px; }
+/* Pulses run only while the `pulse` class is present. StatusDot adds it for a
+ * few seconds after each status change, so an idle dashboard does not repaint
+ * at 60 fps; a static halo keeps the state visible afterwards. */
+.cm-dot.st-busy, .cm-dot.st-running {
+  background-color: #3584e4;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #3584e4 22%, transparent);
+}
+.cm-dot.st-waiting {
+  background-color: #e5a50a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #e5a50a 28%, transparent);
+}
+.cm-dot.pulse.st-busy, .cm-dot.pulse.st-running { animation: cm-pulse 1.6s ease-in-out infinite; }
+.cm-dot.pulse.st-waiting { animation: cm-pulse-amber 1.2s ease-in-out infinite; }
+.cm-dot.st-blocked { background-color: #e01b24; }
+.cm-dot.st-idle    { background-color: #2ec27e; }
+.cm-dot.st-done    { background-color: #9a9996; }
+
+@keyframes cm-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, #3584e4 55%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, #3584e4 0%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in srgb, #3584e4 22%, transparent); }
+}
+@keyframes cm-pulse-amber {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, #e5a50a 60%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, #e5a50a 0%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in srgb, #e5a50a 28%, transparent); }
+}
+
+/* Status pill (label next to dot) */
+.cm-pill {
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.82em;
+  font-weight: 700;
+  background-color: color-mix(in srgb, #9a9996 18%, transparent);
+}
+.cm-pill.st-busy, .cm-pill.st-running { background-color: color-mix(in srgb, #3584e4 16%, transparent); color: color-mix(in srgb, #3584e4 72%, var(--window-fg-color)); }
+.cm-pill.st-waiting { background-color: color-mix(in srgb, #e5a50a 20%, transparent); color: color-mix(in srgb, #e5a50a 72%, var(--window-fg-color)); }
+.cm-pill.st-blocked { background-color: color-mix(in srgb, #e01b24 16%, transparent); color: color-mix(in srgb, #e01b24 72%, var(--window-fg-color)); }
+.cm-pill.st-idle    { background-color: color-mix(in srgb, #2ec27e 18%, transparent); color: color-mix(in srgb, #2ec27e 72%, var(--window-fg-color)); }
+
+/* Small rounded chips (project, tool, model) */
+.cm-chip {
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 0.8em;
+  font-weight: 600;
+  background-color: color-mix(in srgb, var(--window-fg-color) 8%, transparent);
+}
+.cm-chip.accent {
+  background-color: color-mix(in srgb, #D97757 18%, transparent);
+  color: color-mix(in srgb, #D97757 72%, var(--window-fg-color));
+}
+
+/* ------------------------------------------------------------- sidebar */
+.cm-sidebar row {
+  border-radius: 10px;
+  margin: 1px 6px;
+  padding: 8px 10px;
+  transition: background-color 150ms ease-out;
+}
+.cm-sidebar row image { opacity: 0.85; }
+.cm-badge {
+  border-radius: 999px;
+  min-width: 18px;
+  padding: 0 6px;
+  font-size: 0.75em;
+  font-weight: 800;
+  background-color: #D97757;
+  color: white;
+}
+.cm-badge.attention { background-color: #e5a50a; color: black; }
+.cm-brand-title { font-weight: 800; font-size: 1.05em; }
+.cm-brand-icon { -gtk-icon-size: 28px; }
+
+/* --------------------------------------------------------- activity rows */
+.cm-feed-row {
+  padding: 8px 12px;
+  border-radius: 10px;
+  transition: background-color 150ms ease-out;
+}
+.cm-feed-row:hover { background-color: color-mix(in srgb, var(--window-fg-color) 5%, transparent); }
+.cm-feed-row.is-error { background-color: color-mix(in srgb, var(--error-bg-color) 9%, transparent); }
+.cm-feed-row.is-error:hover { background-color: color-mix(in srgb, var(--error-bg-color) 15%, transparent); }
+.cm-feed-icon {
+  border-radius: 8px;
+  min-width: 28px;
+  min-height: 28px;
+  background-color: color-mix(in srgb, var(--window-fg-color) 7%, transparent);
+}
+.cm-feed-icon.k-error  { background-color: color-mix(in srgb, var(--error-bg-color) 18%, transparent); color: var(--error-color); }
+.cm-feed-icon.k-prompt { background-color: color-mix(in srgb, #D97757 18%, transparent); color: color-mix(in srgb, #D97757 72%, var(--window-fg-color)); }
+.cm-feed-icon.k-agent  { background-color: color-mix(in srgb, #9141ac 16%, transparent); color: color-mix(in srgb, #9141ac 72%, var(--window-fg-color)); }
+.cm-feed-icon.k-turn   { background-color: color-mix(in srgb, #2ec27e 16%, transparent); color: color-mix(in srgb, #2ec27e 72%, var(--window-fg-color)); }
+.cm-feed-icon.k-limit  { background-color: color-mix(in srgb, #e5a50a 22%, transparent); color: color-mix(in srgb, #e5a50a 72%, var(--window-fg-color)); }
+.cm-feed-icon.k-tool   { color: var(--accent-color); background-color: color-mix(in srgb, var(--accent-bg-color) 12%, transparent); }
+
+/* ListView rows in timeline/history: hide the default row background */
+listview.cm-list { background: none; }
+listview.cm-list > row { padding: 0; border-radius: 10px; margin: 1px 0; }
+listview.cm-list > row:hover { background: none; }
+
+/* --------------------------------------------------------- agent tree */
+.cm-agent-row {
+  padding: 8px 10px;
+  border-radius: 10px;
+  transition: background-color 150ms ease-out;
+}
+.cm-agent-row:hover { background-color: color-mix(in srgb, var(--window-fg-color) 5%, transparent); }
+.cm-tree-line {
+  min-width: 2px;
+  background-color: color-mix(in srgb, var(--window-fg-color) 14%, transparent);
+  border-radius: 2px;
+  margin-left: 4px;
+  margin-right: 8px;
+}
+
+/* -------------------------------------------------------- misc / states */
+.cm-honest-card {
+  border: 1px dashed color-mix(in srgb, var(--window-fg-color) 22%, transparent);
+  background-color: color-mix(in srgb, var(--card-bg-color) 60%, transparent);
+  box-shadow: none;
+}
+.cm-legend-swatch {
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 3px;
+}
+.cm-toggle-row button { padding: 4px 12px; }
+.cm-meter-track {
+  min-height: 6px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--window-fg-color) 10%, transparent);
+}
+
+/* reduced motion: honour gtk-enable-animations=false automatically
+ * (GTK disables CSS animations/transitions when the setting is off). */
+
+/* office View */
+.cm-office-legend { margin: 4px 12px 12px 12px; }
+.cm-dot.light-red    { background-color: #e8463e; }
+.cm-dot.light-yellow { background-color: #f0be32; }
+.cm-dot.light-green  { background-color: #4ec464; }
+.cm-dot.light-grey   { background-color: #9a9a9a; }
+.cm-rail row { padding-left: 0; padding-right: 0; }
+.cm-rail row > box { margin-left: 8px; }
+.cm-zoom-label { min-width: 52px; font-feature-settings: "tnum"; }
+.cm-person-popover .heading { font-size: 1.05em; }

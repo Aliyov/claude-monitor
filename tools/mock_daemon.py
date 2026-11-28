@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Mock Claude Monitor daemon for UI development.
+"""Mock Claudeville daemon for UI development.
 
-Owns ``io.github.ClaudeMonitor`` on the session bus and serves *obviously
+Owns ``io.github.aliyov.Claudeville`` on the session bus and serves *obviously
 fake* fixture data (projects are named ``mock-*``) following docs/CONTRACT.md.
 Emits SnapshotChanged / EventsAdded every few seconds.
 
@@ -23,11 +23,11 @@ import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
-BUS_NAME = "io.github.ClaudeMonitor"
-PATH = "/io/github/ClaudeMonitor"
+BUS_NAME = "io.github.aliyov.Claudeville"
+PATH = "/io/github/aliyov/Claudeville"
 IFACE_XML = """
 <node>
-  <interface name="io.github.ClaudeMonitor1">
+  <interface name="io.github.aliyov.Claudeville1">
     <method name="GetSnapshot"><arg type="s" direction="out"/></method>
     <method name="GetSessionEvents"><arg type="s" direction="in"/><arg type="x" direction="in"/><arg type="u" direction="in"/><arg type="s" direction="out"/></method>
     <method name="GetTimeline"><arg type="x" direction="in"/><arg type="u" direction="in"/><arg type="s" direction="out"/></method>
@@ -43,6 +43,7 @@ IFACE_XML = """
 """
 
 NO_USAGE = "--no-usage" in sys.argv
+INDEXING = "--indexed" not in sys.argv   # --indexed: skip the fake indexing phase
 rng = random.Random(7)
 NOW = lambda: int(time.time() * 1000)  # noqa: E731
 START = NOW()
@@ -209,8 +210,8 @@ def snapshot() -> dict:
     live = sessions
     return {
         "revision": revision, "generated_at": NOW(),
-        "daemon": {"version": "0.1.0-mock", "started_at": START,
-                   "indexing": {"active": revision < 6, "files_done": min(166, revision * 30), "files_total": 166}},
+        "daemon": {"version": "0.2.0-mock", "started_at": START,
+                   "indexing": {"active": INDEXING and revision < 6, "files_done": min(166, revision * 30), "files_total": 166}},
         "usage": usage,
         "sessions": live,
         "office": office(),
@@ -319,8 +320,8 @@ def tick() -> bool:
         g["status"] = "busy" if g["status"] == "idle" else "idle"
         g["status_since"] = NOW()
         g["cpu_percent"] = 22.0 if g["status"] == "busy" else 0.0
-    conn.emit_signal(None, PATH, "io.github.ClaudeMonitor1", "EventsAdded", GLib.Variant("(s)", (json.dumps({"events": new}),)))
-    conn.emit_signal(None, PATH, "io.github.ClaudeMonitor1", "SnapshotChanged", GLib.Variant("(x)", (revision,)))
+    conn.emit_signal(None, PATH, "io.github.aliyov.Claudeville1", "EventsAdded", GLib.Variant("(s)", (json.dumps({"events": new}),)))
+    conn.emit_signal(None, PATH, "io.github.aliyov.Claudeville1", "SnapshotChanged", GLib.Variant("(x)", (revision,)))
     return True
 
 

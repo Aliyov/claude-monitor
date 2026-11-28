@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Claudeville
+GenericName=Claude Code Monitor
+Comment=Monitor Claude Code sessions, agents, usage and activity
+Exec=claudeville-dashboard
+Icon=io.github.aliyov.Claudeville
+Terminal=false
+Categories=System;Monitor;GTK;GNOME;
+Keywords=claude;ai;agent;monitor;usage;tokens;
+StartupNotify=true
+DBusActivatable=false
