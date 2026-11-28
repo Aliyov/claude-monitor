@@ -53,6 +53,8 @@ class Store:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(agents)")}
         if "effort" not in cols:  # added for the office View (per-call effort override)
             self.db.execute("ALTER TABLE agents ADD COLUMN effort TEXT")
+        if "built_in" not in cols:  # meta isBuiltIn: Explore, Plan, general-purpose... ("contractors")
+            self.db.execute("ALTER TABLE agents ADD COLUMN built_in INTEGER")
         self.db.execute("INSERT OR IGNORE INTO kv VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
         self._in_tx = False
 

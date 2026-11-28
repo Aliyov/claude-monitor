@@ -124,7 +124,8 @@ class IngestTest(unittest.TestCase):
         sub = self.proj / "S" / "subagents"
         sub.mkdir(parents=True)
         (sub / "agent-x1.meta.json").write_text(json.dumps(
-            {"agentType": "Explore", "description": "Find files", "finished": False}))
+            {"agentType": "Explore", "description": "Find files", "finished": False,
+             "isBuiltIn": True, "effort": "low"}))
         with open(sub / "agent-x1.jsonl", "w") as f:
             f.write(assistant("sm1", "2026-11-25T10:00:00Z",
                               [{"type": "tool_use", "id": "s1", "name": "Glob", "input": {"pattern": "**/*.py"}}],
@@ -135,6 +136,10 @@ class IngestTest(unittest.TestCase):
         a = self.store.x("SELECT * FROM agents").fetchone()
         self.assertEqual((a["agent_id"], a["type"], a["description"], a["tool_calls"]),
                          ("x1", "Explore", "Find files", 1))
+        self.assertEqual((a["built_in"], a["effort"]), (1, "low"))
+        from claude_monitor.daemon import queries
+        obj = queries.agent_obj(a, live_session=False)
+        self.assertEqual((obj["built_in"], obj["effort"], obj["status"]), (True, "low", "done"))
         self.assertEqual(self.sess()["agent_count"], 1)
         self.assertEqual(self.sess()["out_tok"], 100)  # subagent tokens roll up into session
 

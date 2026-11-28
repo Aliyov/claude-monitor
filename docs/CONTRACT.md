@@ -60,6 +60,7 @@ running" state) and reconnect when the name appears (`Gio.bus_watch_name`).
              "indexing": {"active": true, "files_done": 40, "files_total": 166}},
   "usage": Usage,
   "sessions": [Session],          // live sessions only (process alive)
+  "office": {"departments": [Department]},  // for the dashboard "View" page
   "totals": {"live": 2, "busy": 1, "waiting": 0, "agents_running": 3,
              "cpu_percent": 12.5, "rss_bytes": 734003200}
 }
@@ -87,6 +88,7 @@ running" state) and reconnect when the name appears (`Gio.bus_watch_name`).
   "kind": "interactive", "entrypoint": "cli", "version": "2.1.332",
   "model": "claude-opus-5-5" | null,
   "context_percent": 41.0 | null, // context window used, only with status-line tee
+  "effort": "high" | null,        // reasoning effort level, only with status-line tee
   "status": "busy" | "idle" | "waiting" | "blocked" | "unknown",
   "status_since": 1795620000000,
   "waiting_for": "input needed" | "permission" | null,  // Claude Code's own reason, when waiting
@@ -104,11 +106,66 @@ running" state) and reconnect when the name appears (`Gio.bus_watch_name`).
 {
   "agent_id": "a12c6d6e88d03b336", "type": "general-purpose",
   "description": "Scaffold project", "model": "opus" | null,
+  "effort": "high" | null,        // per-call effort override from the subagent meta, else null
+  "built_in": true | false | null, // Claude Code built-in type (Explore, Plan, general-purpose…);
+                                   // null for agents indexed before this field existed
   "status": "running" | "done",
   "started_at": ms | null, "last_activity_at": ms | null,
   "current": {"tool": "Read", "summary": "src/main.py", "at": ms} | null,
   "tool_calls": 12
 }
+
+// Department — one slot of the office View. Slots, not projects: every live
+// session has its own slot, even two sessions in the same project.
+//  - slot 0 always exists (dark when unused) and is never removed;
+//  - a new session takes a dark slot, preferring one that last hosted the same
+//    cwd, then the same project, then the lowest; otherwise a slot is added;
+//  - an ended session's slot goes dark but keeps its last project/roster;
+//  - dark slots other than 0 are removed 48 h after last use.
+// Slot assignment persists in the daemon (kv "office_slots").
+{
+  "slot": 0,                       // position; may shift down when an expired slot is removed
+  "lit": true,                     // a live session occupies it
+  "session_id": "uuid" | null,     // join with Snapshot.sessions for status/agents
+  "project": "Claude_Monitor" | null, "cwd": "/home/..." | null,  // current or last host
+  "last_used_at": ms | null,
+  "roster": Roster
+}
+
+// Roster — the team a project can launch, read from agent definition files
+// (frontmatter only): <project>/.claude/agents/*.md, then ~/.claude/agents/*.md
+// (a project agent overrides a user agent of the same name). The project is the
+// nearest ancestor of cwd with .claude/agents, stopping at the git root / $HOME.
+{
+  "source": "agents" | "default",  // "default" = no definition files; the UI shows
+                                   // its default team (lead + grey fillers)
+  "root": "/home/.../Proj" | null, // project root that holds .claude/agents
+  "agents": [RosterAgent],         // sorted by rank
+  "private_room": "principal-engineer" | null   // name of rank 0
+}
+
+// RosterAgent — values exactly as the file states them
+{
+  "name": "implementer", "description": "…" | null,  // description ≤ 300 chars
+  "model": "opus" | "claude-opus-5-5" | "inherit" | null,
+  "effort": "high" | null,
+  "scope": "project" | "user",
+  "rank": 0,                       // 0 = highest
+  "room": "private" | "desk"       // exactly one "private" when agents is non-empty
+}
+// Rank: model family fable > opus > sonnet > haiku > unknown, then version
+// (an alias counts as newest), then effort max > xhigh > high > medium > low.
+// "inherit"/missing model and missing effort use the session's for ranking
+// only. Ties are broken by a stable hash of (project root, name), so the pick
+// looks random but never changes between snapshots.
+//
+// UI rules (View page, not computed by the daemon): the session itself is the
+// "lead" in its own office; a department shows at least 5 people, padded with
+// grey-light filler workers (fillers are not real agents and never show
+// activity); a live subagent whose type matches a RosterAgent name sits at that
+// agent's place, a built_in one (or a parallel duplicate) at a temporary desk.
+// Lights: red = busy/running, yellow = lead waiting on the user or on its
+// running subagents, green = idle/done. Subagents are never yellow.
 
 // Event
 {

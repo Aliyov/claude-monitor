@@ -179,9 +179,12 @@ class Ingestor:
         model = meta.get("pickedEffortModel") or meta.get("model")
         self._ensure_agent(session_id, agent_id)
         effort = meta.get("effort") if isinstance(meta.get("effort"), str) else None
+        built_in = meta.get("isBuiltIn")
+        built_in = (1 if built_in else 0) if isinstance(built_in, bool) else None
         self.store.x("UPDATE agents SET type=?, description=?, model=COALESCE(model, ?), finished=?, "
-                     "effort=COALESCE(?, effort) WHERE session_id=? AND agent_id=?",
-                     (meta.get("agentType"), meta.get("description"), model, finished, effort,
+                     "effort=COALESCE(?, effort), built_in=COALESCE(?, built_in) "
+                     "WHERE session_id=? AND agent_id=?",
+                     (meta.get("agentType"), meta.get("description"), model, finished, effort, built_in,
                       session_id, agent_id))
         if cur is not None and cur[0] == 0 and finished and self._live_session(session_id):
             self._event(session_id, agent_id, int(mtime * 1000), "subagent_end", None,

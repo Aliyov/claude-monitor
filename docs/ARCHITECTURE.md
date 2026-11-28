@@ -35,6 +35,8 @@ user's OAuth token); the per-session messaging sockets (risk of interference).
    ingest.py    ── resumable byte-offset JSONL tailer, defensive parser
    procmon.py   ── 2 s /proc sampling of live process trees
    usage.py     ── status-line drops → limits (drops windows past resets_at)
+   roster.py    ── agent definition frontmatter (.claude/agents/*.md) → teams
+   office.py    ── department slots for the View page (persisted in kv)
    engine.py    ── state machine, notifications, ≤1 Hz coalesced change signals
    store.py     ── SQLite WAL (~6 MB for 500 MB of transcripts)
    dbus_service ── io.github.ClaudeMonitor1 (JSON payloads, see CONTRACT.md)
@@ -60,6 +62,26 @@ user's OAuth token); the per-session messaging sockets (risk of interference).
 - **Native install, not Flatpak**: a sandbox's PID namespace would hide the host
   processes needed for CPU/RAM monitoring.
 - **JSON over D-Bus**: trivial for both GJS and Python; versioned interface name.
+
+## Office View data
+
+The dashboard's "View" page draws each live session as a department of an
+office. The daemon supplies only facts; the animation lives in the dashboard.
+
+- **Teams** come from Claude Code's own subagent definitions:
+  `<project>/.claude/agents/*.md` and `~/.claude/agents/*.md`, frontmatter only
+  (name, description, model, effort). CLAUDE.md prose is not parsed: it is free
+  text, and Claude Code can only launch agents that have a definition file.
+- **Cheap**: each agents dir is re-listed at most every 3 s (`scandir` + mtimes);
+  files are re-read only when that signature changes. A change marks the
+  snapshot dirty. Project-root lookups are cached for 30 s.
+- **Slots** are assigned in `office.py` on every registry change; the layout is
+  written to kv only when it really changes, so departments keep their place
+  across daemon restarts.
+- **Built-in agents** (`isBuiltIn` in the subagent meta) are flagged so the UI
+  can seat them as "contractors".
+- No tokens, no network: everything is read from local files Claude Code
+  already writes.
 
 ## Reliability
 
@@ -87,5 +109,8 @@ user's OAuth token); the per-session messaging sockets (risk of interference).
 - RSS is summed over the process tree (shared pages counted per process).
 - `waiting`/`blocked` registry statuses are interpreted from Claude Code's
   registry; exact semantics may evolve between versions.
+- Session `effort` is only known with the status-line tee; subagent `effort`
+  only when the call overrides it. Subagents report only running/done, so they
+  can never be shown as "waiting".
 - The transcript format is undocumented; parser is defensive and tested on
   synthetic fixtures (`tests/`).

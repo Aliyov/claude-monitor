@@ -72,23 +72,28 @@ sessions = [
         "session_id": "mock-0001-aaaa", "pid": 40001, "name": "mock-alpha", "title": "Refactor storage layer (mock)",
         "project": "mock-alpha", "cwd": "/home/user/Projects/mock-alpha", "git_branch": "main",
         "kind": "interactive", "entrypoint": "cli", "version": "2.1.332", "model": "claude-opus-5-5",
-        "context_percent": 41.0, "status": "busy", "status_since": START - 95000, "started_at": START - 3600_000,
+        "context_percent": 41.0, "effort": "xhigh", "status": "busy", "status_since": START - 95000, "started_at": START - 3600_000,
         "last_activity_at": START, "current": {"tool": "Bash", "summary": "pytest -q tests/", "at": START},
         "cpu_percent": 14.2, "rss_bytes": 412 << 20, "proc_count": 4, "tokens": TOKENS(52000),
         "tool_calls": 214, "errors": 2,
         "agents": [
             {"agent_id": "amock1", "type": "Explore", "description": "Map storage call sites", "model": "haiku",
-             "status": "running", "started_at": START - 60000, "last_activity_at": START,
+             "effort": None, "built_in": True, "status": "running", "started_at": START - 60000, "last_activity_at": START,
              "current": {"tool": "Grep", "summary": "store.get(", "at": START}, "tool_calls": 18},
-            {"agent_id": "amock2", "type": "general-purpose", "description": "Write migration tests", "model": "opus",
-             "status": "done", "started_at": START - 900000, "last_activity_at": START - 300000,
-             "current": None, "tool_calls": 41},
+            {"agent_id": "amock2", "type": "implementer", "description": "Write migration tests", "model": "opus",
+             "effort": None, "built_in": False, "status": "done", "started_at": START - 900000,
+             "last_activity_at": START - 300000, "current": None, "tool_calls": 41},
+            {"agent_id": "amock3", "type": "code-reviewer", "description": "Review storage diff", "model": "sonnet",
+             "effort": "high", "built_in": False, "status": "running", "started_at": START - 120000,
+             "last_activity_at": START, "current": {"tool": "Read", "summary": "store.py", "at": START},
+             "tool_calls": 9},
         ],
     },
     {
         "session_id": "mock-0002-bbbb", "pid": 40002, "name": "mock-beta", "title": "Fix login redirect bug (mock)",
         "project": "mock-beta", "cwd": "/home/user/Projects/mock-beta", "git_branch": "fix/login",
         "kind": "interactive", "entrypoint": "cli", "version": "2.1.332", "model": "claude-fable-5-2", "context_percent": None,
+        "effort": None,
         "status": "waiting", "status_since": START - 40000, "started_at": START - 1200_000,
         "last_activity_at": START - 40000, "current": {"tool": "Bash", "summary": "rm -rf build/", "at": START - 40000},
         "cpu_percent": 0.4, "rss_bytes": 298 << 20, "proc_count": 1, "tokens": TOKENS(8000),
@@ -98,7 +103,7 @@ sessions = [
         "session_id": "mock-0003-cccc", "pid": 40003, "name": "mock-gamma", "title": None,
         "project": "mock-gamma", "cwd": "/home/user/mock-gamma", "git_branch": None,
         "kind": "interactive", "entrypoint": "cli", "version": "2.1.330", "model": None, "context_percent": None,
-        "status": "idle", "status_since": START - 600000, "started_at": START - 7200_000,
+        "effort": None, "status": "idle", "status_since": START - 600000, "started_at": START - 7200_000,
         "last_activity_at": START - 600000, "current": None,
         "cpu_percent": 0.0, "rss_bytes": 251 << 20, "proc_count": 1, "tokens": TOKENS(3100),
         "tool_calls": 12, "errors": 0, "agents": [],
@@ -150,6 +155,43 @@ for i in range(57):
         "tokens": TOKENS(rng.randint(500, 90000)), "live": False,
     })
 
+def _ra(name, model, effort, rank, scope="project", desc=None):
+    return {"name": name, "description": desc, "model": model, "effort": effort, "scope": scope,
+            "rank": rank, "room": "private" if rank == 0 else "desk"}
+
+
+ALPHA_ROSTER = {
+    "source": "agents", "root": "/home/user/Projects/mock-alpha",
+    "agents": [_ra("principal-engineer", "opus", "max", 0, desc="Architecture and hard bugs (mock)"),
+               _ra("implementer", "opus", "high", 1),
+               _ra("code-reviewer", "sonnet", "high", 2),
+               _ra("ui-reviewer", "sonnet", None, 3),
+               _ra("test-writer", "inherit", "medium", 4),
+               _ra("verifier", "haiku", None, 5, scope="user"),
+               _ra("doc-writer", "haiku", "low", 6, scope="user")],
+    "private_room": "principal-engineer",
+}
+BETA_ROSTER = {
+    "source": "agents", "root": "/home/user/Projects/mock-beta",
+    "agents": [_ra("implementer", "opus", None, 0), _ra("verifier", "haiku", None, 1)],
+    "private_room": "implementer",
+}
+DEFAULT_ROSTER = {"source": "default", "root": None, "agents": [], "private_room": None}
+
+
+def office() -> dict:
+    """Mirrors office.py: one slot per live session, plus a dark leftover slot."""
+    deps = []
+    for i, s in enumerate(sessions):
+        roster = {"mock-alpha": ALPHA_ROSTER, "mock-beta": BETA_ROSTER}.get(s["project"], DEFAULT_ROSTER)
+        deps.append({"slot": i, "lit": True, "session_id": s["session_id"], "project": s["project"],
+                     "cwd": s["cwd"], "last_used_at": s["started_at"], "roster": roster})
+    deps.append({"slot": len(deps), "lit": False, "session_id": None, "project": "mock-delta",
+                 "cwd": "/home/user/Projects/mock-delta", "last_used_at": START - 5 * 3600_000,
+                 "roster": DEFAULT_ROSTER})
+    return {"departments": deps}
+
+
 revision = 1
 
 
@@ -171,6 +213,7 @@ def snapshot() -> dict:
                    "indexing": {"active": revision < 6, "files_done": min(166, revision * 30), "files_total": 166}},
         "usage": usage,
         "sessions": live,
+        "office": office(),
         "totals": {
             "live": len(live), "busy": sum(s["status"] == "busy" for s in live),
             "waiting": sum(s["status"] == "waiting" for s in live),
