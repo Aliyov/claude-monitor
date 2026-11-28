@@ -8,8 +8,10 @@ from gi.repository import GLib
 
 from . import paths, queries
 from .ingest import project_name
+from .office import Office
 from .procmon import ProcMon
 from .registry import Registry
+from .roster import Rosters
 from .usage import UsageTracker
 
 log = logging.getLogger(__name__)
@@ -46,6 +48,8 @@ class Engine:
         self.registry = Registry()
         self.procmon = ProcMon()
         self.usage = UsageTracker()
+        self.rosters = Rosters()
+        self.office = Office(store)
         self.live = {}  # session_id -> LiveSession
         self.started_at = now_ms()
         self.revision = 0
@@ -132,6 +136,11 @@ class Engine:
     def _tick_config(self):
         if self.config.reload():
             log.info("config reloaded")
+        try:
+            if self.rosters.changed(sl["cwd"] for sl in self.office.slots if sl.get("cwd")):
+                self.mark_dirty()
+        except Exception:
+            log.exception("roster check failed")
         return True
 
     def _prune(self):
@@ -173,7 +182,18 @@ class Engine:
                     self._status_changed(ls, old, new, e.get("statusUpdatedAt") or now_ms())
                 changed = True
         if changed:
+            self._update_office()
             self.mark_dirty()
+
+    def _update_office(self):
+        live = []
+        for ls in self.live.values():
+            e = ls.entry
+            info = self.usage.session_info(ls.session_id)
+            live.append({"session_id": ls.session_id, "cwd": e.get("cwd"), "project": project_name(e.get("cwd")),
+                         "started_at": e.get("startedAt"), "model": info.get("model"),
+                         "effort": info.get("effort")})
+        return self.office.update(live, now_ms())
 
     def _register_session(self, ls):
         e = ls.entry
@@ -364,6 +384,7 @@ class Engine:
                 "kind": e.get("kind"), "entrypoint": e.get("entrypoint"), "version": e.get("version"),
                 "model": info.get("model") or (r["model"] if r else None),
                 "context_percent": info.get("context_percent"),
+                "effort": info.get("effort"),
                 "status": ls.status, "status_since": ls.status_since,
                 "waiting_for": e.get("waitingFor") if ls.status == "waiting" else None,
                 "started_at": e.get("startedAt"), "last_activity_at": r["last_at"] if r else None,
@@ -373,6 +394,8 @@ class Engine:
                 "tool_calls": r["tool_calls"] if r else 0, "errors": r["errors"] if r else 0,
                 "agents": ags,
             })
+        self._update_office()
+        office = {"departments": self.office.departments(self.rosters)}
         usage = self.usage.limits()
         lh = self.store.kv_get("last_limit_hit")
         usage["last_limit_hit"] = json.loads(lh) if lh else None
@@ -386,7 +409,7 @@ class Engine:
             "daemon": {"version": VERSION, "started_at": self.started_at,
                        "indexing": {"active": self._catching_up, "files_done": self._backlog_done,
                                     "files_total": self._backlog_total}},
-            "usage": usage, "sessions": sessions,
+            "usage": usage, "sessions": sessions, "office": office,
             "totals": {"live": len(sessions), "busy": busy, "waiting": waiting,
                        "agents_running": agents_running,
                        "cpu_percent": round(cpu_total, 1), "rss_bytes": rss_total},

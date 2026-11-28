@@ -45,7 +45,8 @@ def agent_obj(r, live_session, current=None):
     recent = r["last_at"] and (time.time() * 1000 - r["last_at"]) < 15 * 60 * 1000
     running = live_session and not r["finished"] and bool(recent)
     return {"agent_id": r["agent_id"], "type": r["type"], "description": r["description"],
-            "model": r["model"], "status": "running" if running else "done",
+            "model": r["model"], "effort": r["effort"] if "effort" in r.keys() else None,
+            "status": "running" if running else "done",
             "started_at": r["started_at"], "last_activity_at": r["last_at"],
             "current": current if running else None, "tool_calls": r["tool_calls"]}
 

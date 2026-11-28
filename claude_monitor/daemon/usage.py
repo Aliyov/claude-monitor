@@ -84,8 +84,11 @@ class UsageTracker:
             return {}
         d = v[1]
         cw = d.get("context_window") or {}
+        eff = d.get("effort")
+        eff = eff.get("level") if isinstance(eff, dict) else eff
         return {"model": (d.get("model") or {}).get("id"),
-                "context_percent": cw.get("used_percentage")}
+                "context_percent": cw.get("used_percentage"),
+                "effort": eff if isinstance(eff, str) and eff else None}
 
     def limits(self):
         """Latest rate limits across sessions; drops windows whose reset time passed."""

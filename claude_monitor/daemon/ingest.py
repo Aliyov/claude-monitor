@@ -178,9 +178,10 @@ class Ingestor:
         finished = 1 if meta.get("finished") else 0
         model = meta.get("pickedEffortModel") or meta.get("model")
         self._ensure_agent(session_id, agent_id)
-        self.store.x("UPDATE agents SET type=?, description=?, model=COALESCE(model, ?), finished=? "
-                     "WHERE session_id=? AND agent_id=?",
-                     (meta.get("agentType"), meta.get("description"), model, finished,
+        effort = meta.get("effort") if isinstance(meta.get("effort"), str) else None
+        self.store.x("UPDATE agents SET type=?, description=?, model=COALESCE(model, ?), finished=?, "
+                     "effort=COALESCE(?, effort) WHERE session_id=? AND agent_id=?",
+                     (meta.get("agentType"), meta.get("description"), model, finished, effort,
                       session_id, agent_id))
         if cur is not None and cur[0] == 0 and finished and self._live_session(session_id):
             self._event(session_id, agent_id, int(mtime * 1000), "subagent_end", None,
