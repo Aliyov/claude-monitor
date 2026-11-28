@@ -83,6 +83,26 @@ office. The daemon supplies only facts; the animation lives in the dashboard.
 - No tokens, no network: everything is read from local files Claude Code
   already writes.
 
+### Office View rendering (dashboard)
+
+`claude_monitor/dashboard/office/`: `model.py` (who sits where, lights),
+`actors.py` (behaviour: typing, walks to coffee/whiteboard/cooler/lounge,
+"..." chats; working people stay seated), `look.py` (characters, bubbles),
+`art.py` (furniture, walls), `iso.py` (isometric pixel pen), `scene.py`
+(layout + per-frame assembly) and `canvas.py` (GTK widget).
+
+- All art is original and procedural; every object is drawn once into its own
+  sprite with a 1-px outline, and the background is pre-composited.
+- Per frame only textures are composited (background + ~50 sprites); static
+  sprites are re-drawn only where they are in front of a moving one.
+- 12 fps for an enlarged department, 8 fps for the grid, 4 fps when the
+  window is in the background, 0 when hidden, minimised or when the desktop
+  asks for reduced animations. Measured: ~2 ms per frame, ~1 % of one core
+  on top of the idle dashboard.
+- Only real data drives it: lamp colours and tool bubbles come from the
+  snapshot; chat bubbles are decorative dots; the wall clock and window sky
+  follow local time.
+
 ## Reliability
 
 - Byte offsets + inode per file persisted → restart resumes exactly; truncation or

@@ -1,659 +1,420 @@
-"""Isometric pixel-art office scene (original, procedural art).
+"""Office scene: layout, one-time static rendering and per-frame assembly.
 
-One department is a diorama: plank floor, a brick wall with big city windows
-on the left, a plaster wall with pipes, server racks and a whiteboard on the
-right, a glass-walled lead office and private room at the back, a coffee bar,
-a lounge corner, and clusters of back-to-back desks with CRT monitors and
-desk lamps. People sit at desks; working people get a speech bubble with an
-icon of their REAL current tool.
+Building (only when the department's layout changes):
+  * the floor, walls and decals are painted straight into a background;
+  * every piece of furniture is drawn on its own, cropped into a sprite,
+    outlined, and painted onto the background in depth order;
+  * glass partitions are kept out of the background ("overlays") because
+    they are translucent and must be drawn over whoever walks behind them.
 
-Projection: tile (i, j) at height z maps to
-    x = ox + (i - j) * 16,   y = oy + (i + j) * 8 - z
-Faces are drawn by giving cairo an affine matrix for the plane, so bricks,
-planks and windows are simple rectangles in plane coordinates. Antialiasing
-is off, which yields the classic 2:1 pixel stair-steps.
+Each frame (about 12 per second while visible) produces a short list of
+draws: people, bubbles, lamps, screens, server LEDs, steam, the clock and the
+glass, plus any static sprite that is in front of one of those and overlaps
+it (so a desk correctly hides the person sitting behind it). The canvas
+uploads each sprite once as a texture and only composites; nothing is
+re-rendered per frame.
+
+Depth = i + j of an object's footprint centre (painter's order), with a few
+explicit values for the glass rooms.
 """
 from __future__ import annotations
 
 import hashlib
+import itertools
 import math
 import random
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 import cairo
 
-from .model import GREEN, OFF, RED, YELLOW, DepartmentView, Person
+from . import art, look
+from .actors import Director, Nav, Seat, Spot
+from .iso import HW, HH, Pen, crop, new_surface, outline
+from .model import GREY, OFF, RED, YELLOW, DepartmentView, Person
 
-HW, HH = 16, 8            # half tile width / height in art pixels
-WALL_H = 84
-M = 6
-SLAB = 7                   # floor thickness shown at the front edges
-DESK_H = 12
-GI = 17                    # tiles along the right wall
-CLUSTER_I = [4.0, 7.3, 10.6, 13.9]   # desk clusters per row (each seats 2)
+GI = 17
+ROOM_D = 4.0
+CORR_J = 5.4
+LEFT_I = 2.9
+CLUSTER_I = (4.0, 7.3, 10.6, 13.9)
 ROW_J0, ROW_STEP = 7.0, 4.2
+M = 6
+SLAB = 8
+LEAD_SEAT = (2.6, 0.85)
+PRIV_SEAT = (14.6, 0.85)
 
-LIGHT_RGB = {RED: (238, 74, 62), YELLOW: (246, 194, 56), GREEN: (88, 204, 108),
-             "grey": (160, 160, 164), OFF: (70, 70, 76)}
-SHIRTS = [(214, 120, 78), (78, 128, 196), (96, 164, 104), (172, 96, 160), (222, 182, 70),
-          (84, 168, 176), (198, 82, 94), (124, 108, 200), (234, 140, 56), (64, 92, 120)]
-SKINS = [(250, 218, 186), (236, 194, 152), (208, 158, 114), (170, 118, 82), (118, 80, 56)]
-HAIRS = [(46, 34, 28), (96, 62, 36), (184, 136, 78), (28, 28, 32), (156, 72, 40), (206, 196, 176),
-         (40, 90, 170)]
-LEAD_SHIRT = (60, 70, 92)
-FILLER_SHIRT = (150, 150, 156)
+LAMP_RGB = {RED: (240, 70, 58), YELLOW: (248, 196, 50), "green": (90, 210, 110), GREY: (168, 168, 172)}
+_uid = itertools.count(1)
 
 
-def _c(rgb, k=1.0):
-    return tuple(max(0, min(255, int(v * k))) for v in rgb)
+def phase_for(hour: int) -> str:
+    if 8 <= hour < 17:
+        return "day"
+    if 6 <= hour < 8 or 17 <= hour < 20:
+        return "dusk"
+    return "night"
 
 
-@dataclass
-class Anchor:
-    person: Person
-    x: int           # head top centre (art px)
-    y: int
-    box: tuple       # x, y, w, h clickable area
-
-
-@dataclass
-class Rendered:
-    surface: cairo.ImageSurface
-    width: int
-    height: int
-    anchors: list
-    title_xy: tuple
-
-
-# --------------------------------------------------------------------- pen
-class Iso:
-    def __init__(self, cr: cairo.Context, ox: float, oy: float) -> None:
-        self.cr, self.ox, self.oy = cr, ox, oy
-
-    def pt(self, i, j, z=0.0):
-        return self.ox + (i - j) * HW, self.oy + (i + j) * HH - z
-
-    def color(self, rgb, a=1.0):
-        self.cr.set_source_rgba(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, a)
-
-    def rect(self, x, y, w, h, rgb, a=1.0):
-        self.color(rgb, a)
-        self.cr.rectangle(x, y, w, h)
-        self.cr.fill()
-
-    def px(self, x, y, rgb, a=1.0):
-        self.rect(int(x), int(y), 1, 1, rgb, a)
-
-    # planes: draw in local coordinates inside a `with`
-    def floor(self, z=0.0):
-        return _Plane(self.cr, cairo.Matrix(HW, HH, -HW, HH, self.ox, self.oy - z))
-
-    def face_i(self, i, j, z=0.0):
-        """Vertical plane running along +i (faces the viewer's lower left).
-        Local x = tiles along i, local y = pixels *down* from height z."""
-        x, y = self.pt(i, j, z)
-        return _Plane(self.cr, cairo.Matrix(HW, HH, 0, 1, x, y))
-
-    def face_j(self, i, j, z=0.0):
-        """Vertical plane running along +j (faces the viewer's lower right)."""
-        x, y = self.pt(i, j, z)
-        return _Plane(self.cr, cairo.Matrix(-HW, HH, 0, 1, x, y))
-
-    def box(self, i, j, z, w, d, h, rgb, top=None, k_left=0.84, k_right=0.68):
-        """Solid prism; visible faces are top, +j (left) and +i (right)."""
-        with self.face_i(i, j + d, z + h) as p:
-            p.rect(0, 0, w, h, _c(rgb, k_left))
-        with self.face_j(i + w, j, z + h) as p:
-            p.rect(0, 0, d, h, _c(rgb, k_right))
-        with self.floor(z + h) as p:
-            p.rect(i, j, w, d, top or rgb)
-
-
-class _Plane:
-    def __init__(self, cr, m) -> None:
-        self.cr, self.m = cr, m
-
-    def __enter__(self):
-        self.cr.save()
-        self.cr.transform(self.m)
-        return self
-
-    def __exit__(self, *a):
-        self.cr.restore()
-
-    def rect(self, x, y, w, h, rgb, a=1.0):
-        self.cr.set_source_rgba(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, a)
-        self.cr.rectangle(x, y, w, h)
-        self.cr.fill()
-
-
-# ------------------------------------------------------------------ layout
-def _grid(view: DepartmentView):
-    """Desk clusters (2 seats each) fill slots row by row; contractor clusters
-    continue in the following slots inside a taped box."""
+def grid(view: DepartmentView):
+    """(desk clusters, contractor clusters, rows, depth in tiles)."""
     desks = view.by_seat("desk")
     temps = view.by_seat("temp")
     n_desk = max(2, math.ceil(len(desks) / 2))
     n_temp = math.ceil(len(temps) / 2)
     rows = math.ceil((n_desk + n_temp) / len(CLUSTER_I))
-    gj = int(math.ceil(ROW_J0 + rows * ROW_STEP))
-    return n_desk, n_temp, rows, max(gj, 14)
+    gj = max(14, int(math.ceil(ROW_J0 + rows * ROW_STEP)))
+    return n_desk, n_temp, rows, gj
 
 
-def layout_size(view: DepartmentView):
-    _d, _t, _r, gj = _grid(view)
-    w = (GI + gj) * HW + 2 * M
-    h = WALL_H + (GI + gj) * HH + SLAB + 2 * M
-    return w, h, gj
+def layout_key(view: DepartmentView, phase: str) -> tuple:
+    return (view.lit, view.slot, phase, view.project,
+            tuple((p.key, p.seat, p.light == OFF) for p in view.people))
 
 
-def render(view: DepartmentView) -> Rendered:
-    n_desk, n_temp, rows, gj = _grid(view)
-    w, h, _ = layout_size(view)
-    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
-    cr = cairo.Context(surf)
-    cr.set_antialias(cairo.ANTIALIAS_NONE)
-    iso = Iso(cr, M + gj * HW, M + WALL_H)
-    seed = int(hashlib.md5((view.project or str(view.slot)).encode()).hexdigest()[:8], 16)
-    rng = random.Random(seed)
-    lit = view.lit
-
-    _slab(iso, gj)
-    _floor(iso, gj, random.Random(seed))
-    _left_wall(iso, gj, random.Random(seed + 1), lit)
-    _right_wall(iso, random.Random(seed + 2))
-
-    items: list = []   # (depth, order, draw)
-
-    def add(depth, fn):
-        items.append((depth, len(items), fn))
-
-    anchors: list[Anchor] = []
-
-    lead = view.by_seat("office")
-    priv = view.by_seat("private")
-    _room(iso, add, anchors, 0.0, 5.0, lead[0] if lead else None, big=True)
-    _room(iso, add, anchors, GI - 5.0, GI, priv[0] if priv else None, big=False)
-    _servers(iso, add, rng, lit)
-    _coffee_bar(iso, add)
-    _lounge(iso, add, gj)
-
-    desks = view.by_seat("desk")
-    temps = view.by_seat("temp")
-    for slot in range(n_desk + n_temp):
-        r, k = divmod(slot, len(CLUSTER_I))
-        ci, cj = CLUSTER_I[k], ROW_J0 + r * ROW_STEP
-        if slot < n_desk:
-            seats, temp = desks[2 * slot:2 * slot + 2], False
-        else:
-            t = slot - n_desk
-            seats, temp = temps[2 * t:2 * t + 2], True
-            _tape(iso, ci - 0.45, cj - 1.45, 2.9, 3.45)
-        far = seats[0] if seats else None
-        near = seats[1] if len(seats) > 1 else None
-        _cluster(iso, add, anchors, ci, cj, far, near, temp=temp)
-    for (pi, pj) in ((3.0, gj - 0.8), (GI - 0.8, 5.4), (GI - 0.8, gj - 0.8)):
-        add(pi + pj, lambda pi=pi, pj=pj: _plant(iso, pi, pj, big=True))
-
-    items.sort(key=lambda t: (t[0], t[1]))
-    for _d, _n, fn in items:
-        fn()
-
-    if not lit:   # night tint on the drawn pixels only
-        cr.set_operator(cairo.OPERATOR_ATOP)
-        iso.rect(0, 0, w, h, (16, 18, 34), 0.6)
-        cr.set_operator(cairo.OPERATOR_OVER)
-    return Rendered(surf, w, h, anchors, (M, M))
+@dataclass
+class Static:
+    sid: str
+    surf: cairo.ImageSurface
+    x: int
+    y: int
+    w: int
+    h: int
+    depth: float
 
 
-# -------------------------------------------------------------- structure
-def _slab(iso: Iso, gj):
-    with iso.face_i(0, gj, 0) as p:
-        p.rect(0, 0, GI, SLAB, (92, 60, 40))
-        p.rect(0, 0, GI, 1, (150, 100, 66))
-    with iso.face_j(GI, 0, 0) as p:
-        p.rect(0, 0, gj, SLAB, (70, 46, 32))
-        p.rect(0, 0, gj, 1, (130, 88, 58))
+@dataclass
+class Draw:
+    depth: float
+    sid: str
+    surf: cairo.ImageSurface
+    x: int
+    y: int
 
 
-def _floor(iso: Iso, gj, rng):
-    base = (170, 112, 66)
-    with iso.floor() as p:
-        p.rect(0, 0, GI, gj, base)
-        for r in range(int(gj * 4)):          # planks run along i
-            jj = r / 4
-            p.rect(0, jj, GI, 0.25, _c(base, (1.0, 0.95, 1.04, 0.92)[r % 4]))
-            p.rect(0, jj, GI, 0.03, _c(base, 0.78))
-            x = rng.random() * 3
-            while x < GI:
-                p.rect(x, jj, 0.05, 0.25, _c(base, 0.74))
-                x += 2.2 + rng.random() * 2.5
+@dataclass
+class Tag:
+    person: Person
+    x: float
+    y: float
 
 
-def _brick(p, length, height, rng, base=(150, 72, 52)):
-    p.rect(0, 0, length, height, (110, 66, 54))
-    row, v = 0, 0
-    while v < height:
-        u = -0.25 if row % 2 else 0.0
-        while u < length:
-            k = 0.9 + rng.random() * 0.22
-            p.rect(max(0, u) + 0.04, v + 1, min(0.5, length - max(0, u)) - 0.06, 3, _c(base, k))
-            u += 0.5
-        v += 4
-        row += 1
+@dataclass
+class Frame:
+    draws: list = field(default_factory=list)
+    tags: list = field(default_factory=list)
 
 
-def _left_wall(iso: Iso, gj, rng, lit):
-    """Brick wall along j at i = 0, with big windows onto a city."""
-    with iso.face_j(0, 0, WALL_H) as p:
-        _brick(p, gj, WALL_H, rng)
-        for (j0, j1) in ((4.8, 8.6), (9.6, 13.4)):
-            if j1 > gj - 0.5:
-                continue
-            p.rect(j0 - 0.12, 10, j1 - j0 + 0.24, 52, (58, 40, 34))
-            sky_top, sky_bot = ((96, 156, 214), (186, 214, 236)) if lit else ((24, 30, 60), (50, 56, 96))
-            for v in range(12, 60):
-                t = (v - 12) / 48
-                p.rect(j0, v, j1 - j0, 1, tuple(int(a + (b - a) * t) for a, b in zip(sky_top, sky_bot)))
-            jj = j0
-            while jj < j1:
-                bw = 0.3 + rng.random() * 0.5
-                bh = 10 + rng.random() * 30
-                col = (120, 140, 168) if lit else (40, 46, 74)
-                p.rect(jj, 60 - bh, min(bw, j1 - jj), bh, _c(col, 0.85 + rng.random() * 0.3))
-                for wv in range(int(60 - bh + 3), 58, 4):
-                    if rng.random() < 0.45:
-                        p.rect(jj + 0.08, wv, 0.06, 1, (210, 226, 240) if lit else (255, 236, 160))
-                jj += bw + 0.05
-            for m in (j0 + (j1 - j0) / 3, j0 + 2 * (j1 - j0) / 3):
-                p.rect(m - 0.05, 12, 0.1, 48, (58, 40, 34))
-            p.rect(j0, 36, j1 - j0, 2, (58, 40, 34))
-            p.rect(j0 - 0.2, 60, j1 - j0 + 0.4, 3, (176, 150, 120))   # sill
-        p.rect(0, 0, gj, 2, (196, 160, 132))
-        p.rect(0, WALL_H - 3, gj, 3, (84, 56, 40))
+class Scene:
+    def __init__(self, view: DepartmentView, phase: str) -> None:
+        self.uid = next(_uid)
+        self.view = view
+        self.phase = phase
+        self.key = layout_key(view, phase)
+        self.n_desk, self.n_temp, self.rows, self.gj = grid(view)
+        gj = self.gj
+        wt = math.ceil(art.WALL_T * HW)
+        self.ox = M + gj * HW + wt
+        self.oy = M + art.WALL_H + 2 * math.ceil(art.WALL_T * HH) + 2
+        self.width = self.ox + GI * HW + wt + M
+        self.height = self.oy + (GI + gj) * HH + SLAB + M
+        self.extra_spots: list = []
+        self.statics: list[Static] = []
+        self.overlays: list[Static] = []
+        self.bank: dict = {}
+        self.seed = int(hashlib.md5((view.project or str(view.slot)).encode()).hexdigest()[:8], 16)
+        self._overlap_cache: dict = {}
+        self.seats: dict[str, Seat] = {}
+        self.lamps: dict[str, tuple] = {}       # person key -> (i, j, depth)
+        self.screens: dict[str, tuple] = {}     # person key -> (cluster slot, depth)
+        self._geo: dict = {}
+        self._scratch, scr_cr = new_surface(self.width, self.height)
+        self.pen = Pen(scr_cr, self.ox, self.oy)
+        t0 = time.perf_counter()
+        self._build()
+        self.build_ms = (time.perf_counter() - t0) * 1000
+        self.director = Director(self.seats, self.spots, self.nav, self.seed) if view.lit else None
 
+    # ------------------------------------------------------------ build
+    def _render(self, fn, do_outline=True):
+        """Draw fn(pen) into the scratch surface; return (surface, x, y)."""
+        pen, cr = self.pen, self.pen.cr
+        pen.begin()
+        fn(pen)
+        bb = pen.bb
+        if bb is None:
+            return None
+        surf, x, y = crop(self._scratch, bb)
+        cr.save()
+        cr.set_operator(cairo.OPERATOR_CLEAR)
+        cr.rectangle(math.floor(bb[0]) - 1, math.floor(bb[1]) - 1, math.ceil(bb[2] - bb[0]) + 3,
+                     math.ceil(bb[3] - bb[1]) + 3)
+        cr.fill()
+        cr.restore()
+        if do_outline:
+            surf = outline(surf)
+            x, y = x - 1, y - 1
+        return surf, x, y
 
-def _right_wall(iso: Iso, rng):
-    """Plaster wall along i at j = 0: pipes, whiteboard, status screen."""
-    with iso.face_i(0, 0, WALL_H) as p:
-        p.rect(0, 0, GI, WALL_H, (74, 96, 96))
-        for v in range(0, WALL_H, 6):
-            p.rect(0, v, GI, 1, (68, 88, 88))
-        p.rect(0, 6, GI, 2, (150, 70, 60))
-        p.rect(0, 9, GI, 2, (70, 110, 150))
-        for u in (5.4, 11.2):
-            p.rect(u, 6, 0.08, WALL_H - 10, (120, 124, 128))
-        # whiteboard with an abstract diagram (boxes and arrows, no text)
-        p.rect(8.4, 18, 2.8, 30, (220, 222, 226))
-        p.rect(8.5, 19, 2.6, 28, (246, 248, 250))
-        for (u, v, uw, vh, col) in ((8.7, 23, 0.6, 5, (80, 130, 210)), (10.0, 23, 0.6, 5, (210, 90, 80)),
-                                    (9.3, 34, 0.7, 6, (90, 170, 100)), (10.4, 36, 0.4, 4, (80, 130, 210))):
-            p.rect(u, v, uw, 1, col)
-            p.rect(u, v + vh, uw, 1, col)
-            p.rect(u, v, 0.05, vh, col)
-            p.rect(u + uw, v, 0.05, vh + 1, col)
-        p.rect(9.3, 26, 0.7, 1, (60, 60, 70))
-        p.rect(9.6, 28, 0.05, 6, (60, 60, 70))
-        p.rect(8.4, 48, 2.8, 2, (170, 170, 176))
-        # wall-mounted screen
-        p.rect(5.7, 14, 1.8, 12, (30, 32, 36))
-        p.rect(5.8, 15, 1.6, 10, (24, 60, 44))
-        for v in range(17, 24, 2):
-            p.rect(5.9, v, 0.4 + rng.random() * 0.9, 1, (90, 220, 130))
-        p.rect(0, 0, GI, 2, (120, 140, 140))
-        p.rect(0, WALL_H - 3, GI, 3, (50, 62, 62))
+    def _build(self) -> None:
+        view, gj = self.view, self.gj
+        bg, bcr = new_surface(self.width, self.height)
+        bp = Pen(bcr, self.ox, self.oy)
 
+        # --- architecture and floor decals straight into the background
+        art.slab(bp, GI, gj, SLAB)
+        art.floor(bp, GI, gj, random.Random(self.seed))
+        art.room_floor(bp, 0.0, 5.0, ROOM_D, (150, 62, 58), (214, 170, 90))
+        art.room_floor(bp, GI - 5.0, GI, ROOM_D, (64, 92, 138), (200, 200, 210))
+        art.left_wall(bp, gj, random.Random(self.seed + 1), self.phase)
+        art.right_wall(bp, GI, random.Random(self.seed + 2))
+        art.window_light(bp, gj, self.phase)
+        j0 = gj - 3.6
+        art.lounge_rug(bp, 0.8, j0 + 0.1, 2.0, 3.2)
 
-# ------------------------------------------------------------- furniture
-def _plant(iso: Iso, i, j, big=False):
-    x, y = iso.pt(i, j)
-    x, y = int(x), int(y)
-    iso.rect(x - 4, y - 7, 8, 7, (176, 96, 62))
-    iso.rect(x - 5, y - 8, 10, 2, (150, 78, 50))
-    leaf, dark = (82, 160, 90), (54, 120, 66)
-    hg = 18 if big else 11
-    for (dx, dy, w, h, col) in ((-1, -8 - hg, 2, hg, dark), (-6, -3 - hg, 5, 3, leaf),
-                                (1, -5 - hg, 6, 3, leaf), (-7, 2 - hg, 6, 3, dark),
-                                (2, 1 - hg, 6, 3, dark), (-3, -10 - hg, 4, 3, leaf),
-                                (-5, -12, 4, 3, leaf), (2, -13, 4, 3, leaf)):
-        iso.rect(x + dx, y + dy, w, h, col)
+        items: list[tuple] = []   # (depth, fn, overlay)
 
+        def add(depth, fn, overlay=False, shadow=None):
+            items.append((depth, fn, overlay))
+            if shadow:
+                bp.shadow(*shadow)
 
-def _servers(iso: Iso, add, rng, lit):
-    for i in (5.5, 6.6):
-        leds = [(v, u, rng.random() < 0.6, rng.random() < 0.7) for v in range(4, 56, 4) for u in (0.15, 0.3, 0.45)]
+        # --- back rooms
+        add(1.0, lambda p: art.wall_shelf(p, 0.3, books_seed=self.seed), shadow=(0.3, 0.05, 1.8, 0.5))
+        add(3.9, lambda p: art.plant(p, 0.7, 3.3, 1.0))
+        add(4.4, lambda p: art.exec_desk(p, 1.5, 1.4), shadow=(1.5, 1.4, 2.2, 1.0))
+        x, y = bp.pt(*LEAD_SEAT)
+        add(LEAD_SEAT[0] + LEAD_SEAT[1] - 0.15, lambda p, x=x, y=y: art.exec_chair(p, x, y))
+        add(6.5, lambda p: art.glass_front(p, 0.0, 5.0, ROOM_D, (3.45, 4.55)), overlay=True)
+        add(5.5, lambda p: art.glass_side(p, 5.0, 0.0, ROOM_D), overlay=True)
 
-        def draw(i=i, leds=leds):
-            iso.box(i, 0.1, 0, 1.0, 1.0, 58, (44, 48, 56), top=(70, 74, 84))
-            with iso.face_i(i, 1.1, 58) as p:
-                for v in range(4, 56, 4):
-                    p.rect(0.08, v, 0.84, 3, (30, 33, 40))
-                for v, u, on, green in leds:
-                    if on:
-                        col = ((90, 230, 120) if green else (240, 180, 60)) if lit else (50, 54, 60)
-                        p.rect(u, v + 1, 0.06, 1, col)
-        add(i + 0.6, draw)
+        add(14.0, lambda p: art.wall_shelf(p, GI - 4.7, books_seed=self.seed + 9),
+            shadow=(GI - 4.7, 0.05, 1.8, 0.5))
+        add(17.0, lambda p: art.plant(p, GI - 0.6, 3.3, 0.9, pot=(90, 110, 140)))
+        add(16.4, lambda p: art.exec_desk(p, GI - 3.5, 1.4), shadow=(GI - 3.5, 1.4, 2.2, 1.0))
+        x, y = bp.pt(*PRIV_SEAT)
+        add(PRIV_SEAT[0] + PRIV_SEAT[1] - 0.15, lambda p, x=x, y=y: art.exec_chair(p, x, y))
+        add(13.6, lambda p: art.glass_side(p, GI - 5.0, 0.0, ROOM_D), overlay=True)
+        add(18.5, lambda p: art.glass_front(p, GI - 5.0, GI, ROOM_D, (GI - 4.55, GI - 3.45)), overlay=True)
 
+        # --- servers, cooler, whiteboard corner
+        for ri in (5.5, 6.6):
+            add(ri + 1.1, lambda p, ri=ri: art.server_rack(p, ri, 0.1), shadow=(ri, 0.1, 1.0, 1.0))
+        self.racks = [(5.5, 0.1, 62, 6.61), (6.6, 0.1, 62, 7.71)]
+        add(8.5, lambda p: art.plant(p, 8.0, 0.5, 0.8))
+        add(12.1, lambda p: art.cooler(p, 11.35, 0.25), shadow=(11.35, 0.25, 0.5, 0.5))
 
-def _coffee_bar(iso: Iso, add):
-    def bar():
-        iso.box(0.1, 4.6, 0, 1.3, 4.2, 16, (120, 78, 48), top=(196, 146, 96))
-        iso.box(0.3, 5.0, 16, 0.8, 0.9, 12, (150, 152, 158), top=(190, 192, 198))   # espresso machine
-        with iso.face_i(0.3, 5.9, 28) as p:
-            p.rect(0.2, 3, 0.4, 3, (60, 60, 66))
-            p.rect(0.3, 7, 0.2, 2, (240, 240, 236))
-        iso.box(0.35, 7.6, 16, 0.6, 0.7, 7, (70, 60, 52), top=(90, 78, 66))          # grinder
-        for jj in (6.4, 6.9, 7.2):
-            x, y = iso.pt(0.8, jj, 16)
-            iso.rect(int(x) - 1, int(y) - 4, 3, 4, (244, 244, 240))
-            iso.px(int(x) + 2, int(y) - 3, (244, 244, 240))
-    add(0.1 + 7.0, bar)
-    for jj in (5.3, 6.8, 8.3):
-        def stool(jj=jj):
-            x, y = iso.pt(2.2, jj)
-            x, y = int(x), int(y)
-            iso.rect(x - 1, y - 10, 2, 10, (70, 60, 56))
-            iso.rect(x - 4, y - 12, 8, 3, (140, 90, 56))
-            iso.rect(x - 3, y - 1, 6, 1, (60, 52, 48))
-        add(2.2 + jj, stool)
+        # --- coffee bar + lounge (left side)
+        geo: dict = {}
+        add(7.45, lambda p: geo.update(art.coffee_bar(p)), shadow=(0.15, 4.6, 1.3, 4.2))
+        add(9.8, lambda p: art.fridge(p, 0.15, 8.95), shadow=(0.15, 8.95, 0.95, 0.75))
+        for sj in (5.3, 6.8, 8.3):
+            x, y = bp.pt(2.15, sj)
+            add(2.15 + sj, lambda p, x=x, y=y: art.stool(p, x, y))
+        bj0 = max(j0, 13.6)
+        if gj - 0.2 - bj0 >= 1.2:
+            add(0.4 + (bj0 + gj) / 2, lambda p: art.tall_bookcase(p, 0.12, bj0, gj - 0.2 - bj0, seed=self.seed),
+                shadow=(0.12, bj0, 0.6, gj - 0.2 - bj0))
+        add(1.85 + j0 + 1.0, lambda p: art.armchair(p, 1.3, j0 + 0.45), shadow=(1.3, j0 + 0.45, 1.1, 1.1))
+        add(1.7 + j0 + 2.0, lambda p: art.side_table(p, 1.4, j0 + 1.75))
+        add(0.95 + j0 + 3.0, lambda p: art.floor_lamp(p, 0.9, j0 + 3.0))
 
+        # --- desk clusters
+        desks = view.by_seat("desk")
+        temps = view.by_seat("temp")
+        aisles = [CORR_J]
+        for slot in range(self.n_desk + self.n_temp):
+            r, k = divmod(slot, len(CLUSTER_I))
+            ci, cj = CLUSTER_I[k], ROW_J0 + r * ROW_STEP
+            if slot < self.n_desk:
+                pair, temp = desks[2 * slot:2 * slot + 2], False
+            else:
+                t = slot - self.n_desk
+                pair, temp = temps[2 * t:2 * t + 2], True
+                art.tape(bp, ci - 0.45, cj - 1.4, 2.9, 3.6)
+            cdepth = ci + 1 + cj + 1.0
+            seed = self.seed + slot * 101
 
-def _bookshelf_face(p, length, height, seed):
-    k = seed
-    for v in range(4, height - 4, 10):
-        p.rect(0, v + 6, length, 1, (80, 52, 34))
-        u = 0.1
-        while u < length - 0.2:
-            bw = 0.1 + (k % 3) * 0.04
-            col = ((180, 70, 60), (70, 110, 170), (210, 170, 70), (90, 150, 100), (150, 90, 160))[k % 5]
-            p.rect(u, v + 6 - (5 + k % 3), bw, 5 + k % 3, col)
-            u += bw + 0.03
-            k += 7
-
-
-def _lounge(iso: Iso, add, gj):
-    j0 = gj - 3.5
-
-    def shelf():
-        iso.box(0.1, j0, 0, 0.8, 2.6, 40, (110, 72, 46), top=(140, 96, 62))
-        with iso.face_j(0.9, j0, 40) as p:
-            _bookshelf_face(p, 2.6, 40, int(j0 * 13))
-    add(0.5 + j0 + 1.3, shelf)
-    with iso.floor() as p:
-        p.rect(1.4, j0 - 0.4, 3.0, 3.2, (70, 104, 110))
-        p.rect(1.6, j0 - 0.2, 2.6, 2.8, (86, 124, 130))
-
-    def chair():
-        iso.box(2.2, j0 + 0.8, 0, 1.3, 1.2, 8, (196, 98, 58), top=(220, 120, 74))
-        iso.box(2.2, j0 + 0.8, 8, 0.35, 1.2, 10, (176, 84, 50), top=(210, 110, 70))
-        iso.box(2.2, j0 + 0.8, 8, 1.3, 0.25, 5, (176, 84, 50))
-        iso.box(2.2, j0 + 1.75, 8, 1.3, 0.25, 5, (176, 84, 50))
-    add(2.8 + j0 + 1.4, chair)
-
-
-def _tape(iso: Iso, i, j, w, d):
-    with iso.floor() as p:
-        u = 0.0
-        while u < w:
-            p.rect(i + u, j, 0.28, 0.08, (236, 200, 70))
-            p.rect(i + u, j + d, 0.28, 0.08, (236, 200, 70))
-            u += 0.5
-        v = 0.0
-        while v < d:
-            p.rect(i, j + v, 0.06, 0.28, (236, 200, 70))
-            p.rect(i + w, j + v, 0.06, 0.28, (236, 200, 70))
-            v += 0.5
-
-
-def _room(iso: Iso, add, anchors, i0, i1, person: Person | None, big: bool):
-    """Glass-walled room at the back, i in [i0, i1), j in [0, 4)."""
-    d = 4.0
-    with iso.floor() as p:
-        p.rect(i0 + 0.1, 0.1, i1 - i0 - 0.2, d - 0.2, (122, 82, 58))
-        p.rect(i0 + 0.6, 1.6, i1 - i0 - 1.2, 2.0, (150, 62, 58) if big else (70, 96, 140))
-        p.rect(i0 + 0.75, 1.75, i1 - i0 - 1.5, 1.7, (176, 82, 70) if big else (90, 118, 164))
-    mid = (i0 + i1) / 2
-    add(i0 + 1.2, lambda: _wall_shelf(iso, i0 + 0.3))
-    add(i1 - 0.1, lambda: _plant(iso, i1 - 0.7, 0.6))
-    _seated(iso, add, anchors, person, mid - 1.0, 1.4, temp=False, facing="front", exec_desk=True)
-    door = (i1 - 1.6, i1 - 0.5) if big else (i0 + 0.5, i0 + 1.6)
-
-    def glass_front():
-        with iso.face_i(i0, d, 40) as p:
-            for (a, b) in ((0, door[0] - i0), (door[1] - i0, i1 - i0)):
-                if b <= a:
+            def draw_cluster(p, ci=ci, cj=cj, seed=seed, temp=temp, slot=slot):
+                self._geo[slot] = art.cluster(p, ci, cj, seed, temp)
+            add(cdepth, draw_cluster, shadow=(ci, cj, 2.0, 2.0))
+            far_aisle = CORR_J if r == 0 else cj - 1.1
+            near_aisle = cj + 3.1
+            if near_aisle not in aisles:
+                aisles.append(near_aisle)
+            for idx, si, sj, facing, aisle in ((0, ci + 1.0, cj - 0.55, "front", far_aisle),
+                                               (1, ci + 1.0, cj + 2.55, "back", near_aisle)):
+                person = pair[idx] if idx < len(pair) else None
+                if not temp:
+                    sdepth = si + sj + (-0.05 if facing == "front" else 0.35)
+                    cx, cy = bp.pt(si, sj + (0 if facing == "front" else 0.35))
+                    seat_col = random.Random(seed + idx).choice(((88, 96, 132), (60, 64, 76), (150, 70, 60),
+                                                                (70, 120, 110)))
+                    add(sdepth, lambda p, cx=cx, cy=cy, f=facing, c=seat_col: art.office_chair(p, cx, cy, f, c))
+                if person is None or person.light == OFF:
                     continue
-                p.rect(a, 0, b - a, 40, (190, 226, 240), 0.22)
-                p.rect(a, 30, b - a, 10, (90, 70, 56))
-                p.rect(a, 0, b - a, 2, (70, 76, 84))
-                u = a
-                while u <= b:
-                    p.rect(u, 0, 0.06, 40, (70, 76, 84))
-                    u += 1.0
-                p.rect(a + 0.2, 6, 0.3, 1, (240, 250, 255), 0.7)
-    add(mid + d + 0.2, glass_front)
+                self.seats[person.key] = Seat(
+                    person.key, si, sj, facing, [(si, aisle)],
+                    chat_point=None if temp else (si + 0.6, aisle),
+                    chat_face="+j" if facing == "front" else "-j")
+                lamp_ij = (ci + 1.8, cj + 0.62) if facing == "front" else (ci + 0.2, cj + 1.72)
+                self.lamps[person.key] = (lamp_ij[0], lamp_ij[1], cdepth + 0.01)
+                if facing == "back":
+                    self.screens[person.key] = (slot, cdepth + 0.02)
 
-    side_i = i1 if big else i0
+        # front corner furniture when the last row leaves room
+        free_j = ROW_J0 + self.rows * ROW_STEP - 0.6
+        if gj - free_j >= 2.4:
+            fj = gj - 1.4
+            add(5.0 + fj + 0.4, lambda p, fj=fj: art.copier(p, 4.6, fj), shadow=(4.6, fj, 1.0, 0.8))
+            add(6.3 + fj + 0.3, lambda p, fj=fj: art.filing_cabinet(p, 5.9, fj + 0.2), shadow=(5.9, fj + 0.2, 1.24, 0.6))
+            art.round_rug(bp, 10.2, fj - 0.9, 3.6, 2.2)
+            add(11.4 + fj, lambda p, fj=fj: art.low_table(p, 11.2, fj - 0.35), shadow=(11.2, fj - 0.35, 1.0, 0.7))
+            for bi, bj, col in ((10.6, fj - 0.3, (220, 120, 70)), (12.7, fj + 0.4, (90, 140, 200)),
+                                (11.6, fj + 0.85, (120, 180, 110))):
+                add(bi + bj, lambda p, bi=bi, bj=bj, c=col: art.beanbag(p, bi, bj, c))
+            self.extra_spots = [Spot("lounge", 11.0, fj + 0.5, "+i", (11.0, ROW_J0 + (self.rows - 1) * ROW_STEP + 3.1))]
+        for pi, pj, s in ((GI - 0.55, CORR_J + 0.9, 1.0), (GI - 0.6, gj - 0.6, 1.1), (3.5, gj - 0.45, 0.9)):
+            add(pi + pj, lambda p, pi=pi, pj=pj, s=s: art.plant(p, pi, pj, s))
 
-    def glass_side():
-        with iso.face_j(side_i, 0, 40) as p:
-            p.rect(0, 0, d, 40, (190, 226, 240), 0.22)
-            p.rect(0, 30, d, 10, (90, 70, 56))
-            p.rect(0, 0, d, 2, (70, 76, 84))
-            for u in (0.0, 1.0, 2.0, 3.0, 4.0):
-                p.rect(u, 0, 0.06, 40, (70, 76, 84))
-    add(side_i + d / 2 + (0.3 if big else -0.3), glass_side)
+        # --- rooms: seats for lead / private
+        lead = view.by_seat("office")
+        if lead and lead[0].light != OFF:
+            self.seats[lead[0].key] = Seat(lead[0].key, *LEAD_SEAT, "front",
+                                           [(4.0, LEAD_SEAT[1]), (4.0, CORR_J)])
+            self.lamps[lead[0].key] = (3.45, 1.6, 4.41)
+        priv = view.by_seat("private")
+        if priv and priv[0].light != OFF:
+            self.seats[priv[0].key] = Seat(priv[0].key, *PRIV_SEAT, "front",
+                                           [(GI - 4.0, PRIV_SEAT[1]), (GI - 4.0, CORR_J)])
+            self.lamps[priv[0].key] = (GI - 1.65, 1.6, 16.41)
 
+        self.nav = Nav(LEFT_I, aisles)
+        self.spots = [Spot("coffee", 2.45, 6.05, "-i", (LEFT_I, 6.05)),
+                      Spot("coffee", 2.45, 7.55, "-i", (LEFT_I, 7.55)),
+                      Spot("cooler", 11.6, 1.45, "-j", (11.6, CORR_J)),
+                      Spot("whiteboard", 9.3, 1.5, "-j", (9.3, CORR_J)),
+                      Spot("whiteboard", 10.4, 1.7, "-j", (10.4, CORR_J)),
+                      Spot("lounge", 2.2, gj - 0.65, "-i", (LEFT_I, gj - 0.65))] + self.extra_spots
 
-def _wall_shelf(iso: Iso, i):
-    iso.box(i, 0.05, 0, 1.8, 0.5, 34, (110, 72, 46), top=(140, 96, 62))
-    with iso.face_i(i, 0.55, 34) as p:
-        _bookshelf_face(p, 1.8, 34, int(i * 10))
+        # --- render items in depth order
+        for n, (depth, fn, overlay) in enumerate(sorted(items, key=lambda t: t[0])):
+            res = self._render(fn)
+            if res is None:
+                continue
+            surf, x, y = res
+            st = Static(f"s{self.uid}:{n}", surf, x, y, surf.get_width(), surf.get_height(), depth)
+            if overlay and view.lit:
+                self.overlays.append(st)
+            else:
+                bcr.set_source_surface(surf, x, y)
+                bcr.paint()
+                self.statics.append(st)
+        self.steam_xy = geo.get("steam")
+        self.screen_geo = {k: (self._geo.get(slot, {}).get("near_screen"), d)
+                           for k, (slot, d) in self.screens.items()}
+        if not view.lit:
+            bcr.set_operator(cairo.OPERATOR_ATOP)
+            bcr.set_source_rgba(14 / 255, 16 / 255, 34 / 255, 0.62)
+            bcr.paint()
+            bcr.set_operator(cairo.OPERATOR_OVER)
+        self.background = bg
 
+    # ------------------------------------------------------------ dynamic
+    def _dyn(self, out, key, depth, fn, do_outline=False) -> None:
+        hit = self.bank.get(key)
+        if hit is None:
+            hit = self._render(fn, do_outline) or (new_surface(1, 1)[0], 0, 0)
+            if len(self.bank) > 3000:
+                self.bank.clear()
+            self.bank[key] = hit
+        surf, x, y = hit
+        out.append(Draw(depth, f"g{self.uid}:{key}", surf, x, y))
 
-# ----------------------------------------------------------------- desks
-TOOL_ICON = {"Edit": "code", "Write": "code", "MultiEdit": "code", "NotebookEdit": "code",
-             "Bash": "term", "Read": "look", "Grep": "look", "Glob": "look", "LS": "look",
-             "WebFetch": "web", "WebSearch": "web", "Agent": "team", "Task": "team"}
-GLYPHS = {
-    "code": ["..#...#..", ".#..#..#.", "#...#...#", ".#.#...#.", "..#...#.."],
-    "term": ["#........", ".#.......", "..#......", ".#.......", "#...####."],
-    "look": [".###...", "#...#..", "#...#..", ".###.#.", ".....##"],
-    "web":  [".#####.", "#.#.#.#", "#######", "#.#.#.#", ".#####."],
-    "team": [".#...#.", "###.###", ".#...#.", "##...##", "##...##"],
-    "gear": ["..#.#..", ".#####.", "##...##", ".#####.", "..#.#.."],
-    "wait": ["#######", ".#...#.", "..#.#..", ".#...#.", "#######"],
-    "ask":  [".###.", "#...#", "...#.", "..#..", "..#.."],
-}
+    def sync(self, view: DepartmentView, now: float) -> None:
+        self.view = view
+        if self.director is not None:
+            self.director.sync(view.people, now)
 
+    def frame(self, now: float, hour: int, minute: int) -> Frame:
+        fr = Frame()
+        if not self.view.lit or self.director is None:
+            return fr
+        out: list[Draw] = []
+        night = self.phase == "night"
+        # ambient animation
+        for ri, rj, rh, d in self.racks:
+            f = int(now * 2.5) % 4
+            self._dyn(out, f"led:{ri}:{f}", d,
+                      lambda p, ri=ri, rj=rj, rh=rh, f=f: art.server_leds(p, ri, rj, rh, f, True))
+        f = int(now * 1.5) % 6
+        self._dyn(out, f"wscr:{f}", 0.05, lambda p, f=f: art.wall_screen(p, f))
+        self._dyn(out, f"clk:{hour}:{minute}", 0.06, lambda p: art.clock(p, 7.75, 72, hour, minute))
+        if self.steam_xy:
+            f = int(now * 6) % 6
+            sx, sy = self.steam_xy
+            self._dyn(out, f"steam:{f}", 7.46, lambda p, f=f: art.steam(p, sx, sy, f))
+        for st in self.overlays:
+            out.append(Draw(st.depth, st.sid, st.surf, st.x, st.y))
 
-def _bubble(iso: Iso, x, y, kind, light):
-    g = GLYPHS[kind]
-    gw, gh = len(g[0]), len(g)
-    bw, bh = gw + 6, gh + 6
-    bx, by = int(x), int(y) - bh
-    ink = (40, 36, 40)
-    iso.rect(bx, by + 1, bw, bh - 2, ink)
-    iso.rect(bx + 1, by, bw - 2, bh, ink)
-    iso.rect(bx + 1, by + 1, bw - 2, bh - 2, (252, 250, 244))
-    iso.rect(bx + 1, by + bh, 3, 2, ink)
-    iso.rect(bx + 2, by + bh - 1, 1, 2, (252, 250, 244))
-    col = {RED: (200, 60, 50), YELLOW: (190, 140, 20)}.get(light, (60, 60, 70))
-    for r, row in enumerate(g):
-        for c, ch in enumerate(row):
-            if ch == "#":
-                iso.px(bx + 3 + c, by + 3 + r, col)
-
-
-def _cluster(iso: Iso, add, anchors, ci, cj, far, near, temp):
-    """Two desks back to back: `far` sits behind the back desk facing the
-    viewer; `near` sits in front of the front desk with the back to us."""
-    _seated(iso, add, anchors, far, ci, cj, temp=temp, facing="front")
-    _seated(iso, add, anchors, near, ci, cj + 1.0, temp=temp, facing="back")
-
-
-def _desk(iso: Iso, i, j, w, temp, exec_desk=False):
-    if temp:
-        top, body = (206, 208, 212), (150, 152, 158)
-        for (li, lj) in ((i + 0.1, j + 0.85), (i + w - 0.15, j + 0.85), (i + w - 0.15, j + 0.1)):
-            x, y = iso.pt(li, lj)
-            iso.rect(int(x), int(y) - DESK_H + 2, 1, DESK_H - 2, (110, 112, 118))
-        iso.box(i, j, DESK_H - 2, w, 1.0, 2, body, top=top)
-    else:
-        top, body = ((150, 92, 56), (116, 72, 44)) if exec_desk else ((186, 134, 86), (140, 96, 60))
-        iso.box(i, j, 0, w, 1.0, DESK_H, body, top=top)
-        with iso.face_i(i, j + 1.0, DESK_H) as p:   # drawers
-            p.rect(w - 0.75, 3, 0.6, 3, _c(body, 0.7))
-            p.rect(w - 0.75, 7, 0.6, 3, _c(body, 0.7))
-            p.rect(w - 0.5, 4, 0.1, 1, (220, 200, 160))
-            p.rect(w - 0.5, 8, 0.1, 1, (220, 200, 160))
-
-
-def _monitor(iso: Iso, i, j, screen_to_viewer, on, working, lines):
-    iso.box(i + 0.25, j + 0.1, DESK_H, 0.2, 0.3, 2, (150, 146, 134))
-    iso.box(i, j, DESK_H + 2, 0.7, 0.55, 11, (214, 208, 190), top=(230, 226, 210))
-    if screen_to_viewer:
-        with iso.face_i(i, j + 0.55, DESK_H + 13) as p:
-            p.rect(0.06, 2, 0.58, 8, (30, 34, 40))
-            if on:
-                p.rect(0.08, 3, 0.54, 6, (28, 64, 48) if working else (36, 52, 72))
-                if working:
-                    for n, v in enumerate(range(4, 9, 2)):
-                        p.rect(0.1, v, lines[n], 1, (110, 240, 150))
+        frames = self.director.step(now)
+        bubbles = []
+        for af in frames:
+            p = af.person
+            seated = af.pose.startswith("sit")
+            lamp = self.lamps.get(af.key)
+            if lamp:
+                rgb = LAMP_RGB.get(p.light, LAMP_RGB[GREY])
+                glow = 0.0 if p.light == GREY else (1.0 if p.light != RED else 1.0 + (int(now * 1.5 + af.phase) % 2) * 0.5)
+                li, lj, ld = lamp
+                self._dyn(out, f"lamp:{li}:{lj}:{p.light}:{glow}:{night}", ld,
+                          lambda pen, li=li, lj=lj, rgb=rgb, g=glow: art.lamp(pen, li, lj, rgb, g, night))
+            sg = self.screen_geo.get(af.key)
+            if sg and sg[0]:
+                (kind, si, sj, sz), sd = sg
+                if p.light == RED and seated:
+                    state, f = "code", int(now * 4 + af.phase) % 4
+                elif p.light == YELLOW:
+                    state, f = "wait", int(now * 2) % 2
                 else:
-                    p.rect(0.3, 5, 0.1, 1, (120, 160, 210))
-    # keyboard
-    iso.box(i + 0.05, j + (0.62 if screen_to_viewer else -0.0) + (0 if screen_to_viewer else 0), DESK_H,
-            0.6, 0.22, 1, (60, 62, 70), top=(96, 98, 108)) if screen_to_viewer else None
+                    state, f = "idle", int(now * 0.8 + af.phase) % 4
+                self._dyn(out, f"scr:{si}:{sj}:{state}:{f}", sd,
+                          lambda pen, k=kind, si=si, sj=sj, sz=sz, s=state, f=f:
+                          art.screen(pen, k, si, sj, sz, s, f, int(si * 10 + sj)))
+            L = look.look_for(p.name, p.key, p.role)
+            sid, surf = look.sprite(L, af.pose, af.frame, af.flip)
+            x, y = self.pen.ipt(af.i, af.j)
+            out.append(Draw(af.i + af.j, sid, surf, x - (look.AX + 1), y - (look.AY + 1)))
+            head = y + look.head_top(af.pose, af.frame)
+            tag_y = head
+            if af.bubble:
+                bsid, bs = look.bubble(*af.bubble)
+                bob = int(now * 2 + af.phase) % 2
+                by = head - bs.get_height() + 3 - bob
+                bubbles.append(Draw(1e6, bsid, bs, x + 3, by))
+                tag_y = min(tag_y, by + 2)
+            fr.tags.append(Tag(p, x, tag_y - 1))
 
+        # statics in front of something dynamic are drawn again over it
+        need = {}
+        for d in out:
+            for st in self._in_front(d):
+                need[st.sid] = st
+        out.extend(Draw(st.depth, st.sid, st.surf, st.x, st.y) for st in need.values())
+        out.sort(key=lambda d: d.depth)
+        out.extend(bubbles)
+        fr.draws = out
+        return fr
 
-def _lamp(iso: Iso, i, j, light):
-    x, y = iso.pt(i, j, DESK_H)
-    x, y = int(x), int(y)
-    rgb = LIGHT_RGB.get(light, LIGHT_RGB[OFF])
-    if light in (RED, YELLOW, GREEN):
-        iso.rect(x - 5, y - 2, 11, 4, rgb, 0.22)
-    iso.rect(x - 2, y - 1, 5, 2, (60, 60, 66))
-    iso.rect(x, y - 9, 1, 8, (60, 60, 66))
-    iso.rect(x - 2, y - 13, 6, 4, rgb)
-    iso.rect(x - 2, y - 13, 6, 1, _c(rgb, 1.25))
-
-
-def _chair(iso: Iso, x, y, col=(52, 56, 68)):
-    iso.rect(x - 6, y - 21, 12, 13, col)
-    iso.rect(x - 5, y - 20, 10, 3, _c(col, 1.3))
-    iso.rect(x - 1, y - 8, 2, 6, (40, 42, 50))
-    iso.rect(x - 5, y - 2, 10, 2, (40, 42, 50))
-
-
-def _looks(p: Person):
-    seed = int(hashlib.md5((p.name or p.key).encode()).hexdigest()[:8], 16)
-    shirt = LEAD_SHIRT if p.role == "lead" else FILLER_SHIRT if p.filler else SHIRTS[seed % len(SHIRTS)]
-    return shirt, SKINS[(seed >> 4) % len(SKINS)], HAIRS[(seed >> 8) % len(HAIRS)], (seed >> 12) % 4
-
-
-def _body_front(iso: Iso, p: Person, x, y):
-    """Seated, facing the viewer; (x, y) = floor point under the chair.
-    Returns the head-top y."""
-    shirt, skin, hair, style = _looks(p)
-    t = y - 30
-    iso.rect(x - 6, t + 11, 12, 11, _c(shirt, 0.85))
-    iso.rect(x - 4, t + 11, 8, 11, shirt)
-    if p.role == "lead":
-        iso.rect(x - 1, t + 11, 2, 6, (230, 232, 236))
-        iso.rect(x, t + 12, 1, 5, (190, 60, 56))
-    iso.rect(x - 4, t + 2, 8, 9, skin)
-    iso.rect(x - 4, t + 10, 8, 1, _c(skin, 0.86))
-    iso.rect(x - 5, t + 5, 1, 3, _c(skin, 0.92))
-    iso.rect(x + 4, t + 5, 1, 3, _c(skin, 0.92))
-    iso.rect(x - 4, t, 8, 3, hair)
-    if style == 0:
-        iso.rect(x - 5, t + 1, 1, 5, hair)
-        iso.rect(x + 4, t + 1, 1, 5, hair)
-    elif style == 1:
-        iso.rect(x - 3, t - 1, 5, 1, hair)
-    elif style == 2:
-        iso.rect(x - 5, t + 1, 1, 10, hair)
-        iso.rect(x + 4, t + 1, 1, 10, hair)
-    else:
-        iso.rect(x + 2, t - 3, 4, 4, hair)
-    if p.filler:
-        iso.rect(x - 3, t + 6, 6, 1, _c(skin, 0.8))
-    else:
-        iso.px(x - 2, t + 6, (34, 30, 34))
-        iso.px(x + 1, t + 6, (34, 30, 34))
-        iso.rect(x - 1, t + 8, 2, 1, _c(skin, 0.75))
-    return t
-
-
-def _body_back(iso: Iso, p: Person, x, y):
-    shirt, skin, hair, style = _looks(p)
-    t = y - 30
-    iso.rect(x - 6, t + 11, 12, 11, _c(shirt, 0.8))
-    iso.rect(x - 4, t + 11, 8, 11, _c(shirt, 0.92))
-    iso.rect(x - 4, t + 2, 8, 9, skin)
-    iso.rect(x - 4, t, 8, 9 if style != 1 else 8, hair)
-    iso.rect(x - 5, t + 1, 1, 4, hair)
-    iso.rect(x + 4, t + 1, 1, 4, hair)
-    if style == 2:
-        iso.rect(x - 4, t + 9, 8, 3, hair)
-    if style == 3:
-        iso.rect(x - 1, t + 9, 2, 5, hair)
-    iso.rect(x - 5, t + 4, 1, 2, skin)
-    iso.rect(x + 4, t + 4, 1, 2, skin)
-    return t
-
-
-def _seated(iso: Iso, add, anchors, person, i, j, temp, facing, exec_desk=False):
-    """One work place: a 2-tile desk at row j. 'front' = the person sits
-    behind it (smaller j) facing us; 'back' = in front of it, back to us."""
-    lit = person is not None and person.light != OFF
-    working = lit and person.working
-    lr = random.Random(int(i * 100 + j * 10))
-    lines = [0.1 + lr.random() * 0.4 for _ in range(3)]
-    if facing == "front":
-        pj = j - 0.55
-        x, y = (int(v) for v in iso.pt(i + 1.0, pj))
-
-        def behind():
-            if not temp:
-                _chair(iso, x, y)
-            if lit:
-                top = _body_front(iso, person, x, y)
-                anchors.append(Anchor(person, x, top, (x - 7, top - 1, 14, 24)))
-                _maybe_bubble(iso, person, x + 7, top + 4)
-        add(i + 1.0 + pj, behind)
-
-        def desk():
-            _desk(iso, i, j, 2.0, temp, exec_desk)
-            _monitor(iso, i + 0.65, j + 0.1, False, lit, working, lines)
-            _lamp(iso, i + 1.75, j + 0.8, person.light if person else OFF)
-            if exec_desk:
-                mx, my = iso.pt(i + 0.3, j + 0.7, DESK_H)
-                iso.rect(int(mx), int(my) - 4, 3, 4, (244, 244, 240))
-        add(i + 1.0 + j + 0.5, desk)
-    else:
-        pj = j + 1.55
-        x, y = (int(v) for v in iso.pt(i + 1.0, pj))
-
-        def desk():
-            _desk(iso, i, j, 2.0, temp)
-            _monitor(iso, i + 0.75, j + 0.3, True, lit, working, lines)
-            _lamp(iso, i + 0.25, j + 0.2, person.light if person else OFF)
-        add(i + 1.0 + j + 0.5, desk)
-
-        def in_front():
-            if lit:
-                top = _body_back(iso, person, x, y)
-                anchors.append(Anchor(person, x, top, (x - 7, top - 1, 14, 24)))
-                _maybe_bubble(iso, person, x + 7, top + 4)
-            if not temp:
-                _chair(iso, x, y + 6, (58, 62, 76))
-        add(i + 1.0 + pj, in_front)
-
-
-def _maybe_bubble(iso: Iso, p: Person, x, y):
-    if p.role == "lead" and p.light == YELLOW:
-        _bubble(iso, x, y, "ask" if p.status == "waiting" else "wait", YELLOW)
-    elif p.working and p.current:
-        _bubble(iso, x, y, TOOL_ICON.get(p.current.get("tool") or "", "gear"), RED)
+    def _in_front(self, d: Draw) -> list:
+        w, h = d.surf.get_width(), d.surf.get_height()
+        key = (d.x, d.y, w, h, round(d.depth, 3))
+        hit = self._overlap_cache.get(key)
+        if hit is None:
+            hit = [st for st in self.statics
+                   if st.depth > d.depth and st.x < d.x + w and d.x < st.x + st.w
+                   and st.y < d.y + h and d.y < st.y + st.h]
+            if len(self._overlap_cache) > 4000:
+                self._overlap_cache.clear()
+            self._overlap_cache[key] = hit
+        return hit

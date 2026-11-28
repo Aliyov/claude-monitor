@@ -123,18 +123,34 @@ class SeatingTest(unittest.TestCase):
 
 
 class SceneTest(unittest.TestCase):
-    def test_render_every_kind_of_department(self):
+    def test_build_and_frame_every_kind_of_department(self):
         from claude_monitor.dashboard.office import scene
         s = session("busy", [agent("e1", "Explore", built_in=True, started=1),
                              agent("v1", "ver", started=2), agent("v2", "ver", started=3)])
         cases = [model.build(dep([ra(f"a{i}", i) for i in range(9)]), s),
                  model.build(dep(), session("waiting")),
                  model.build(dep([ra("impl", 0)], lit=False), None)]
-        for v in cases:
-            r = scene.render(v)
-            self.assertEqual((r.surface.get_width(), r.surface.get_height()), (r.width, r.height))
-            lit_people = [p for p in v.people if p.light != model.OFF]
-            self.assertEqual(sorted(a.person.key for a in r.anchors), sorted(p.key for p in lit_people))
+        for phase in ("day", "dusk", "night"):
+            for v in cases:
+                sc = scene.Scene(v, phase)
+                self.assertEqual((sc.background.get_width(), sc.background.get_height()), (sc.width, sc.height))
+                sc.sync(v, 100.0)
+                fr = sc.frame(100.0, 12, 30)
+                lit_people = sorted(p.key for p in v.people if p.light != model.OFF)
+                self.assertEqual(sorted(t.person.key for t in fr.tags), lit_people)
+                people_draws = [d for d in fr.draws if d.sid.startswith("p:")]
+                self.assertEqual(len(people_draws), len(lit_people))
+                depths = [d.depth for d in fr.draws]
+                self.assertEqual(depths, sorted(depths))     # painter's order
+                for d in fr.draws:                            # everything inside the canvas
+                    self.assertTrue(-2 <= d.x and d.x + d.surf.get_width() <= sc.width + 2, d.sid)
+
+    def test_layout_key_ignores_status_changes(self):
+        from claude_monitor.dashboard.office import scene
+        a = model.build(dep([ra("impl", 0)]), session("idle"))
+        b = model.build(dep([ra("impl", 0)]), session("busy", [agent("x", "impl")]))
+        self.assertEqual(scene.layout_key(a, "day"), scene.layout_key(b, "day"))
+        self.assertNotEqual(scene.layout_key(a, "day"), scene.layout_key(a, "night"))
 
 
 if __name__ == "__main__":
