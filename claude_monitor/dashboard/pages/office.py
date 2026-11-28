@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from gi.repository import Adw, Gdk, Gtk
+from gi.repository import Adw, Gdk, Gtk, Pango
 
 from ..office import model
 from ..office.canvas import OfficeCanvas
@@ -119,6 +119,9 @@ class PersonPopover(Gtk.Popover):
             w = v if isinstance(v, Gtk.Widget) else label(str(v), wrap=True)
             if isinstance(w, Gtk.Label):
                 w.set_max_width_chars(34)
+                w.set_lines(2)
+                w.set_ellipsize(Pango.EllipsizeMode.END)
+                w.set_tooltip_text(str(v))
             self.grid.attach(w, 1, r, 1, 1)
         self.note.set_visible(False)
         self._session = view.session_id if view.lit else None
